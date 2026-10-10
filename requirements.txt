@@ -1,0 +1,9 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pandas>=2.2.0
+numpy>=1.26.0
+yfinance>=0.2.40
+httpx>=0.27.0
+python-dotenv>=1.0.0
+# Optional for full MCP: mcp (official SDK) or your specific server client
+# For indicators if extending: ta-lib or pure pandas as implemented
