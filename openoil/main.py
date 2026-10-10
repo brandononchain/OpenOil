@@ -40,20 +40,26 @@ DASHBOARD_HTML = """
 <title>OpenOil</title>
 <style>
   body { background:#0a0a0a; color:#00ff9f; font-family: 'Courier New', monospace; margin:0; padding:20px; }
-  .wrap { max-width:900px; margin:0 auto; }
-  h1 { color:#fff; letter-spacing:2px; }
+  .wrap { max-width:960px; margin:0 auto; }
+  h1 { color:#fff; letter-spacing:2px; margin-bottom:4px; }
+  .sub { color:#666; margin-bottom:16px; }
   .panel { border:1px solid #00ff9f; padding:12px 16px; margin:12px 0; background:#111; }
-  .row { display:flex; justify-content:space-between; }
+  .row { display:flex; justify-content:space-between; margin:4px 0; }
   .label { color:#888; }
   .value { color:#00ff9f; }
-  a { color:#00ff9f; }
-  .spark { font-size:14px; letter-spacing:1px; }
+  .bull { color:#00ff9f; }
+  .bear { color:#ff6b6b; }
+  a { color:#00ff9f; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  ascii-art { display:block; margin:8px 0; }
+  .trade-row { font-size:13px; padding:2px 0; border-bottom:1px solid #222; }
 </style>
+<script type="module" src="https://ascii.rest/ascii.js"></script>
 </head>
 <body>
 <div class="wrap">
   <h1>OPENOIL</h1>
-  <p style="color:#666">open-source intelligence for crude oil markets</p>
+  <div class="sub">open-source intelligence for crude oil markets</div>
 
   <div class="panel">
     <div class="row"><span class="label">STATUS</span><span class="value">LIVE</span></div>
@@ -62,17 +68,36 @@ DASHBOARD_HTML = """
   </div>
 
   <div class="panel">
-    <div class="row"><span class="label">WTI</span><span class="value">$91.52</span></div>
+    <div class="row"><span class="label">LIVE CHART</span><span class="value">WTI CANDLESTICKS</span></div>
+    <ascii-art piece="candlesticks" options='{"start":91.5,"seed":42}'></ascii-art>
+    <div class="row" style="margin-top:8px"><span class="label">WTI</span><span class="value">$91.52</span></div>
     <div class="row"><span class="label">BRENT</span><span class="value">$95.10</span></div>
     <div class="row"><span class="label">SPREAD</span><span class="value">3.58</span></div>
-    <div class="spark" style="margin-top:8px">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆</div>
   </div>
 
   <div class="panel">
-    <div class="row"><span class="label">ENSEMBLE BIAS</span><span class="value">+0.34</span></div>
+    <div class="row"><span class="label">ANALYSIS</span></div>
+    <div class="row"><span class="label">ENSEMBLE BIAS</span><span class="value bull">+0.34</span></div>
     <div class="row"><span class="label">REGIME</span><span class="value">TRENDING</span></div>
-    <div class="row"><span class="label">CVD</span><span class="value">+1,240</span></div>
-    <div class="row"><span class="label">SENTIMENT</span><span class="value">+0.18</span></div>
+    <div class="row"><span class="label">CVD</span><span class="value bull">+1,240</span></div>
+    <div class="row"><span class="label">SENTIMENT</span><span class="value bull">+0.18</span></div>
+    <div class="row"><span class="label">4H TARGET</span><span class="value">92.40</span></div>
+    <div class="row"><span class="label">24H TARGET</span><span class="value">93.10</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="row"><span class="label">SIGNALS</span></div>
+    <div class="trade-row">TECHNICAL &nbsp;&nbsp; bullish confluence &nbsp;&nbsp; +0.42</div>
+    <div class="trade-row">FUNDAMENTAL &nbsp; EIA supportive &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; +0.28</div>
+    <div class="trade-row">GEOPOLITICS &nbsp; risk premium elevated +0.31</div>
+    <div class="trade-row">RISK &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; size 0.8x regime &nbsp;&nbsp; 0.00</div>
+  </div>
+
+  <div class="panel">
+    <div class="row"><span class="label">TRADES</span></div>
+    <div class="trade-row">#1024 BUY 0.10 @ 91.20 &nbsp; SL 90.40 &nbsp; TP 92.80 &nbsp; <span class="bull">OPEN</span></div>
+    <div class="trade-row">#1021 SELL 0.05 @ 92.10 &nbsp; closed +$84 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="bull">WIN</span></div>
+    <div class="trade-row">#1018 BUY 0.10 @ 90.55 &nbsp; closed -$42 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="bear">LOSS</span></div>
   </div>
 
   <div class="panel">
