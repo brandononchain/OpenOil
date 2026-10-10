@@ -10,116 +10,54 @@ OpenOil continuously analyzes multi-timeframe technicals, EIA inventories, news 
 
 **Site:** [openoil.si](https://openoil.si) · **Source:** [github.com/brandononchain/OpenOil](https://github.com/brandononchain/OpenOil)
 
-## Capabilities
-
-- Multi-timeframe technical confluence (EMA, RSI, MACD, ATR, Bollinger)
-- Live EIA inventory analysis and fundamental bias
-- Multi-source news and geopolitics sentiment scoring
-- LLM-based causal and counterfactual reasoning
-- Persistent memory graph with optional sentence-transformer embeddings
-- Multi-agent debate (Technical, Fundamental, Geopolitics, Risk + plugins)
-- Self-improvement loop driven by closed-position outcomes
-- Data Oracle that prefers MT5 MCP ticks and depth-of-market
-- Ensemble forecasting and volatility/trend regime detection
-- Dynamic position sizing and risk engine
-- Human-in-the-loop governance with append-only audit traces
-- Real-time order-flow metrics (CVD, aggressor classification)
-- Alternative data layer (AIS, COT proxy, refinery signals)
-- Multi-horizon price forecasts and quantitative risk (VaR, expected shortfall)
-- Live WTI / Brent / spread market data
-- ASCII terminal dashboards and charts
-- Plugin architecture for community agents and connectors
-- Docker deployment ready for Railway or any Linux host
-
 ## Quick Start
 
 ```bash
 git clone https://github.com/brandononchain/OpenOil.git
 cd OpenOil
 pip install -r requirements.txt
-python oil_super_intelligence.py
+python -m openoil.main
 ```
 
-Available endpoints:
+Or:
 
-- `/dashboard` — primary status view
-- `/charts` — live price charts and news feed
-- `/regime` — current market regime
-- `/market` — WTI, Brent, and spread snapshot
-- `/predict` — multi-horizon forecasts
-- `/risk` — quantitative risk metrics
+```bash
+uvicorn openoil.main:app --host 0.0.0.0 --port 8000
+```
 
 ## Project Layout
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the intended package structure.
-
-Current code lives at the root for simplicity. The long-term layout moves runtime modules under `openoil/` and keeps plugins, docs, and tests at the top level.
-
-## Architecture
-
 ```
-┌────────────────────────────┐     HTTP/MCP     ┌────────────────────┐
-│ Linux host (Railway / VPS)  │◄────────────────►│ Windows VPS         │
-│                             │                  │                     │
-│ • Analysis & agents         │                  │ • MetaTrader 5      │
-│ • Memory graph              │                  │ • MCP server        │
-│ • Governance & audit        │                  │ • Order execution   │
-│ • Dashboard & API           │                  │                     │
-└────────────────────────────┘                  └────────────────────┘
+OpenOil/
+├── openoil/          # main package (entry: openoil.main)
+├── plugins/          # community agents & connectors
+├── docs/
+├── tests/
+├── requirements.txt
+├── Dockerfile
+└── railway.toml
 ```
 
-The expected MCP tool contract is documented in [docs/MT5_MCP_CONTRACT.md](docs/MT5_MCP_CONTRACT.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout.
+
+## Endpoints
+
+- `/` and `/health`
+- `/dashboard`
+- `/charts`
+- `/regime`
+- `/market`
+- `/predict`
+- `/risk`
 
 ## Plugin System
 
-Place a Python module in the `plugins/` directory. Implement either `register_agent()` or `register_connector()`. The module is loaded automatically at startup and its agent participates in the multi-agent debate.
-
-```python
-def my_agent(context: dict) -> dict:
-    return {
-        "bias": 0.15,
-        "confidence": 0.65,
-        "view": "Custom signal from external data"
-    }
-
-def register_agent():
-    return "my_agent", my_agent
-```
-
-## Configuration
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `MT5_MCP_ENDPOINT` | URL of the MT5 MCP server | — |
-| `MT5_SYMBOL` | Symbol to analyze and trade | `USOIL` |
-| `LLM_API_KEY` | Key for optional LLM reasoning | — |
-| `EIA_API_KEY` | Key for official EIA data | — |
-| `RISK_PER_TRADE` | Fraction of account risked per trade | `0.01` |
-| `ACCOUNT_BALANCE` | Account size used for position sizing | `10000` |
-| `MEMORY_FILE` | Path to the persistent memory graph | `openoil_memory.json` |
-
-## Roadmap
-
-- Richer embedding retrieval and long-term memory
-- Community plugin registry
-- Tick-level microstructure when MCP exposes full order book
-- Paper-trading performance leaderboard
-- Optional web-based dashboard
-- Expanded alternative data sources
-
-## Contributing
-
-1. Fork the repository.
-2. Add an agent or connector under `plugins/`.
-3. Include tests where practical.
-4. Open a pull request.
-
-Continuous integration runs on every push via `.github/workflows/ci.yml`.
+Drop a module in `plugins/` that implements `register_agent()` or `register_connector()`. It is auto-discovered.
 
 ## License
 
-Released under the MIT License.
+MIT
 
 ## Disclaimer
 
-This software is provided for research and educational purposes only. Crude oil markets are highly volatile. Always validate behavior on a demo account before any live use. Past performance is not indicative of future results. Nothing in this repository constitutes financial advice.
+Research and educational use only. Not financial advice.
