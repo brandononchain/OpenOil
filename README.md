@@ -16,13 +16,11 @@ A production-grade, open-source system that continuously analyzes, reasons about
 - Full historical OHLC + tick + symbol info pulls when MCP is available
 - Railway-ready Docker deployment
 
-## Live API Data
-- Public no-key endpoints from AmericasOilWatch:
-  - `GET /api/v1/wti` — current WTI price
-  - `GET /api/v1/us-stocks` — weekly petroleum stocks
-- Integrated into analysis as primary live price source (yfinance fallback).
-- New endpoint: `GET /live` returns current price + stocks.
-- Optional: set `OILPRICEAPI_KEY` for OilPriceAPI (WTI/Brent futures, historical) if you want a commercial feed.
+## Live Regime Dashboard
+- `GET /regime` — dedicated live market regime dashboard (auto-refreshes every 15s)
+- Shows current regime, size/stop multipliers, volatility proxy, DOM/OFI status, and ensemble forecast
+- Main `/dashboard` now also includes a regime summary panel
+- Uses ascii.rest components for consistent terminal aesthetic
 
 ## Architecture
 ```
@@ -44,6 +42,7 @@ export MT5_MCP_ENDPOINT=http://your-mt5-mcp:8000   # optional
 export LLM_API_KEY=your_key                         # optional
 python oil_super_intelligence.py
 # Visit http://localhost:8000/dashboard
+# Visit http://localhost:8000/regime for live regime view
 ```
 
 ## Environment Variables
