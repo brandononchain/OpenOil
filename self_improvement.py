@@ -67,12 +67,34 @@ class SelfImprovement:
         }
 
     def suggest_weights(self) -> Dict:
-        """Simple attribution: which agent bias correlated with wins."""
-        closed = [r for r in self.records if r.get("outcome")]
-        if len(closed) < 5:
-            return {"note": "Need more trades for attribution", "weights": None}
-        # Placeholder: return current defaults with a note
-        return {
-            "note": "Attribution available after more closed trades",
-            "suggested": {"Technical": 0.35, "Fundamental": 0.25, "Geopolitics": 0.25, "Risk": 0.15}
+        """Attribute performance and suggest dynamic agent weights."""
+        closed = [r for r in self.records if r.get("outcome") and r.get("agent_bias") is not None]
+        if len(closed) < 8:
+            return {
+                "note": "Need more closed trades for reliable attribution",
+                "current": {"Technical": 0.35, "Fundamental": 0.25, "Geopolitics": 0.25, "Risk": 0.15},
+                "suggested": None
+            }
+
+        wins = [r for r in closed if r["outcome"] == "win"]
+        if not wins:
+            return {"note": "No wins yet", "suggested": None}
+
+        avg_win_bias = sum(abs(r.get("agent_bias", 0)) for r in wins) / len(wins)
+        suggested = {
+            "Technical": 0.30 + (avg_win_bias * 0.1),
+            "Fundamental": 0.25,
+            "Geopolitics": 0.25 + (avg_win_bias * 0.05),
+            "Risk": 0.15
         }
+        total = sum(suggested.values())
+        suggested = {k: round(v / total, 3) for k, v in suggested.items()}
+        return {
+            "trades_analyzed": len(closed),
+            "win_rate": round(len(wins) / len(closed), 2),
+            "suggested_weights": suggested,
+            "note": "Weights adjusted based on bias magnitude on winning trades"
+        }
+
+    def get_open_records(self) -> List[Dict]:
+        return [r for r in self.records if not r.get("closed")]
