@@ -16,11 +16,10 @@ A production-grade, open-source system that continuously analyzes, reasons about
 - Full historical OHLC + tick + symbol info pulls when MCP is available
 - Railway-ready Docker deployment
 
-## Live Regime Dashboard
-- `GET /regime` — dedicated live market regime dashboard (auto-refreshes every 15s)
-- Shows current regime, size/stop multipliers, volatility proxy, DOM/OFI status, and ensemble forecast
-- Main `/dashboard` now also includes a regime summary panel
-- Uses ascii.rest components for consistent terminal aesthetic
+## Expanded Live Market Data
+- Live WTI + Brent prices and Brent-WTI spread from AmericasOilWatch public API.
+- Full snapshot including stocks.
+- New endpoint: `GET /market` returns WTI, Brent, spread, and stocks in one call.
 
 ## Architecture
 ```
@@ -42,7 +41,7 @@ export MT5_MCP_ENDPOINT=http://your-mt5-mcp:8000   # optional
 export LLM_API_KEY=your_key                         # optional
 python oil_super_intelligence.py
 # Visit http://localhost:8000/dashboard
-# Visit http://localhost:8000/regime for live regime view
+# Visit http://localhost:8000/market for live WTI/Brent/spread
 ```
 
 ## Environment Variables
