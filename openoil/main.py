@@ -89,12 +89,22 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="muted">BRENT <span id="brent">95.10</span></div>
     <div class="muted">SPREAD <span id="spr">3.58</span></div>
     <div class="spacer"></div>
+    <div class="muted">PAPER · not a live perpetual</div>
     <div class="muted" id="clock"></div>
-    <div class="up">LIVE</div>
+    <div class="up">SIM</div>
   </header>
 
   <div class="mid">
     <aside class="rail">
+      <div class="sec">
+        <div class="hd">ACCOUNT</div>
+        <div class="row"><span class="k">BALANCE</span><span id="bal">10,000.00</span></div>
+        <div class="row"><span class="k">EQUITY</span><span id="eq">10,000.00</span></div>
+        <div class="row"><span class="k">MARGIN USED</span><span id="mu">0.00</span></div>
+        <div class="row"><span class="k">FREE MARGIN</span><span id="fm">10,000.00</span></div>
+        <div class="row"><span class="k">MARGIN LEVEL</span><span id="ml">—</span></div>
+        <div class="row"><span class="k">LEVERAGE</span><span>1:100</span></div>
+      </div>
       <div class="sec">
         <div class="hd">QUOTE</div>
         <div class="row"><span class="k">BID</span><span class="bid" id="qbid">91.50</span></div>
@@ -124,8 +134,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <section class="chart-wrap">
       <div class="chart-head">
         <span>USOIL · CANDLES</span>
-        <span class="tf">
-          <button>1m</button><button>5m</button><button class="on">15m</button><button>1h</button><button>4h</button>
+        <span class="tf" id="tfs">
+          <button data-tf="1">1m</button><button data-tf="5">5m</button><button data-tf="15" class="on">15m</button><button data-tf="60">1h</button><button data-tf="240">4h</button>
         </span>
         <span class="muted" id="ohlc">o — h — l — c —</span>
       </div>
@@ -147,12 +157,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="tbl">
       <table>
         <thead><tr><th>ID</th><th>SIDE</th><th>QTY</th><th>ENTRY</th><th>SL</th><th>TP</th><th>PNL</th><th>STATUS</th></tr></thead>
-        <tbody>
-          <tr><td>#1024</td><td class="buy">BUY</td><td>0.10</td><td>91.20</td><td>90.40</td><td>92.80</td><td class="up" id="openpnl">+$32</td><td class="up">OPEN</td></tr>
-          <tr><td>#1021</td><td class="sell">SELL</td><td>0.05</td><td>92.10</td><td>92.80</td><td>91.20</td><td class="up">+$84</td><td>WIN</td></tr>
-          <tr><td>#1018</td><td class="buy">BUY</td><td>0.10</td><td>90.55</td><td>89.90</td><td>91.40</td><td class="dn">-$42</td><td>LOSS</td></tr>
-          <tr><td>#1012</td><td class="buy">BUY</td><td>0.20</td><td>89.10</td><td>88.20</td><td>91.00</td><td class="up">+$210</td><td>WIN</td></tr>
-        </tbody>
+        <tbody id="blotter"></tbody>
       </table>
     </div>
   </footer>
@@ -160,24 +165,49 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <script>
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
+const CONTRACT = 1000;
+const LEVERAGE = 100;
 let mid = 91.52;
-const candles = [];
+let tf = 15;
+let balance = 10000;
+let nextId = 1025;
+const ticks = [];
+const closed = [
+  {id:1021, side:'SELL', qty:0.05, entry:92.10, sl:92.80, tp:91.20, pnl:84, status:'WIN'},
+  {id:1018, side:'BUY', qty:0.10, entry:90.55, sl:89.90, tp:91.40, pnl:-42, status:'LOSS'},
+  {id:1012, side:'BUY', qty:0.20, entry:89.10, sl:88.20, tp:91.00, pnl:210, status:'WIN'}
+];
+const openPos = [
+  {id:1024, side:'BUY', qty:0.10, entry:91.20, sl:90.40, tp:92.80}
+];
 
-function seed() {
+function seedTicks() {
   let p = 88.4;
-  const now = Date.now();
-  for (let i = 60; i >= 0; i--) {
-    const o = p;
-    const drift = (Math.random() - 0.46) * 0.55;
-    const h = o + Math.abs(drift) + Math.random() * 0.35;
-    const l = o - Math.abs(drift) * 0.6 - Math.random() * 0.28;
-    const c = Math.max(l, Math.min(h, o + drift));
-    p = c;
-    candles.push({ t: now - i * 15 * 60000, o, h, l, c });
+  const startT = Date.now() - 90 * 240 * 60000;
+  const n = 90 * 240;
+  for (let i = 0; i < n; i += 2) {
+    p += (Math.random() - 0.482) * 0.16;
+    ticks.push({ t: startT + i * 60000, p });
   }
-  mid = candles[candles.length - 1].c;
+  mid = ticks[ticks.length - 1].p;
 }
-seed();
+seedTicks();
+
+function bars(minutes) {
+  const ms = minutes * 60000;
+  const buckets = new Map();
+  for (const tk of ticks) {
+    const b = Math.floor(tk.t / ms) * ms;
+    let c = buckets.get(b);
+    if (!c) buckets.set(b, { t: b, o: tk.p, h: tk.p, l: tk.p, c: tk.p });
+    else {
+      c.h = Math.max(c.h, tk.p);
+      c.l = Math.min(c.l, tk.p);
+      c.c = tk.p;
+    }
+  }
+  return [...buckets.values()].sort((a, b) => a.t - b.t);
+}
 
 function resize() {
   const r = canvas.getBoundingClientRect();
@@ -194,26 +224,24 @@ function draw() {
   const padL = 8, padR = 62, padT = 12, padB = 22;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   if (plotW < 20 || plotH < 20) return;
-  const view = candles.slice(-48);
+  const view = bars(tf).slice(-60);
+  if (!view.length) return;
   let lo = Math.min(...view.map(c => c.l));
   let hi = Math.max(...view.map(c => c.h));
   const pad = (hi - lo) * 0.08 || 0.2;
   lo -= pad; hi += pad;
   const y = v => padT + (hi - v) / (hi - lo) * plotH;
   const slot = plotW / view.length;
-
   ctx.strokeStyle = '#163024';
   ctx.lineWidth = 1;
+  ctx.font = '11px ui-monospace, monospace';
+  ctx.textAlign = 'left';
   for (let i = 0; i < 5; i++) {
     const gy = padT + (plotH / 4) * i;
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
-    const price = hi - (hi - lo) * (i / 4);
     ctx.fillStyle = '#6d8274';
-    ctx.font = '11px ui-monospace, monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(price.toFixed(2), w - padR + 6, gy + 4);
+    ctx.fillText((hi - (hi - lo) * (i / 4)).toFixed(2), w - padR + 6, gy + 4);
   }
-
   view.forEach((c, i) => {
     const x = padL + i * slot + slot / 2;
     const up = c.c >= c.o;
@@ -223,13 +251,11 @@ function draw() {
     ctx.moveTo(x, y(c.h)); ctx.lineTo(x, y(c.l)); ctx.stroke();
     const top = y(Math.max(c.o, c.c));
     const bot = y(Math.min(c.o, c.c));
-    const bh = Math.max(1, bot - top);
-    const bw = Math.max(3, slot * 0.62);
-    ctx.globalAlpha = up ? 0.9 : 0.85;
-    ctx.fillRect(x - bw / 2, top, bw, bh);
+    const bw = Math.max(2, slot * 0.62);
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(x - bw / 2, top, bw, Math.max(1, bot - top));
     ctx.globalAlpha = 1;
   });
-
   const last = view[view.length - 1];
   ctx.setLineDash([3, 3]);
   ctx.strokeStyle = '#3dff9a';
@@ -239,24 +265,98 @@ function draw() {
   ctx.fillRect(w - padR + 4, y(last.c) - 8, 54, 16);
   ctx.fillStyle = '#3dff9a';
   ctx.fillText(last.c.toFixed(2), w - padR + 8, y(last.c) + 4);
-
   document.getElementById('ohlc').textContent =
-    'o ' + last.o.toFixed(2) + '  h ' + last.h.toFixed(2) + '  l ' + last.l.toFixed(2) + '  c ' + last.c.toFixed(2);
+    tfLabel() + '  o ' + last.o.toFixed(2) + '  h ' + last.h.toFixed(2) + '  l ' + last.l.toFixed(2) + '  c ' + last.c.toFixed(2);
+  const hiEl = document.getElementById('hi');
+  const loEl = document.getElementById('lo');
+  hiEl.textContent = Math.max(...view.map(c => c.h)).toFixed(2);
+  loEl.textContent = Math.min(...view.map(c => c.l)).toFixed(2);
+}
+
+function tfLabel() {
+  return ({1:'1m', 5:'5m', 15:'15m', 60:'1h', 240:'4h'})[tf];
+}
+
+function money(n) {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pnlOf(pos, px) {
+  const dir = pos.side === 'BUY' ? 1 : -1;
+  return dir * (px - pos.entry) * pos.qty * CONTRACT;
+}
+function marginOf(pos, px) {
+  return pos.qty * CONTRACT * px / LEVERAGE;
+}
+
+function renderBlotter() {
+  const rows = [];
+  for (const pos of openPos) {
+    const u = pnlOf(pos, mid);
+    const cls = u >= 0 ? 'up' : 'dn';
+    const side = pos.side === 'BUY' ? 'buy' : 'sell';
+    rows.push('<tr><td>#' + pos.id + '</td><td class="' + side + '">' + pos.side + '</td><td>' + pos.qty.toFixed(2) +
+      '</td><td>' + pos.entry.toFixed(2) + '</td><td>' + pos.sl.toFixed(2) + '</td><td>' + pos.tp.toFixed(2) +
+      '</td><td class="' + cls + '">' + (u >= 0 ? '+' : '-') + '$' + Math.abs(u).toFixed(0) +
+      '</td><td class="up">OPEN</td></tr>');
+  }
+  for (const pos of closed.slice(0, 6)) {
+    const side = pos.side === 'BUY' ? 'buy' : 'sell';
+    const cls = pos.pnl >= 0 ? 'up' : 'dn';
+    rows.push('<tr><td>#' + pos.id + '</td><td class="' + side + '">' + pos.side + '</td><td>' + pos.qty.toFixed(2) +
+      '</td><td>' + pos.entry.toFixed(2) + '</td><td>' + pos.sl.toFixed(2) + '</td><td>' + pos.tp.toFixed(2) +
+      '</td><td class="' + cls + '">' + (pos.pnl >= 0 ? '+' : '-') + '$' + Math.abs(pos.pnl).toFixed(0) +
+      '</td><td>' + pos.status + '</td></tr>');
+  }
+  document.getElementById('blotter').innerHTML = rows.join('');
+}
+
+function renderAccount() {
+  let upnl = 0, used = 0;
+  for (const pos of openPos) {
+    upnl += pnlOf(pos, mid);
+    used += marginOf(pos, mid);
+  }
+  const equity = balance + upnl;
+  const free = equity - used;
+  const level = used > 0 ? (equity / used) * 100 : 0;
+  document.getElementById('bal').textContent = money(balance);
+  document.getElementById('eq').textContent = money(equity);
+  document.getElementById('mu').textContent = money(used);
+  document.getElementById('fm').textContent = money(free);
+  document.getElementById('ml').textContent = used > 0 ? level.toFixed(0) + '%' : '—';
+}
+
+function managePositions() {
+  for (let i = openPos.length - 1; i >= 0; i--) {
+    const pos = openPos[i];
+    const hitTp = pos.side === 'BUY' ? mid >= pos.tp : mid <= pos.tp;
+    const hitSl = pos.side === 'BUY' ? mid <= pos.sl : mid >= pos.sl;
+    if (hitTp || hitSl) {
+      const realized = pnlOf(pos, hitTp ? pos.tp : pos.sl);
+      balance += realized;
+      closed.unshift({ ...pos, pnl: realized, status: realized >= 0 ? 'WIN' : 'LOSS' });
+      openPos.splice(i, 1);
+    }
+  }
+  if (openPos.length < 2 && Math.random() < 0.04) {
+    const side = Math.random() > 0.45 ? 'BUY' : 'SELL';
+    const qty = Math.random() > 0.5 ? 0.10 : 0.05;
+    const sl = side === 'BUY' ? mid - 0.80 : mid + 0.80;
+    const tp = side === 'BUY' ? mid + 1.40 : mid - 1.40;
+    openPos.push({ id: nextId++, side, qty, entry: mid, sl, tp });
+  }
 }
 
 function fmt(n) { return n.toFixed(2); }
 
 function renderBook() {
   const levels = 14;
-  let asks = [], bids = [];
-  for (let i = levels; i >= 1; i--) {
-    const ap = mid + 0.02 * i + (Math.random() - 0.5) * 0.01;
-    const bp = mid - 0.02 * i + (Math.random() - 0.5) * 0.01;
-    asks.push({ p: ap, s: Math.round(8 + Math.random() * 220) });
-    bids.push({ p: bp, s: Math.round(8 + Math.random() * 220) });
+  const asks = [], bids = [];
+  for (let i = 1; i <= levels; i++) {
+    asks.push({ p: mid + 0.02 * i, s: Math.round(12 + Math.random() * 240) });
+    bids.push({ p: mid - 0.02 * i, s: Math.round(12 + Math.random() * 240) });
   }
   asks.sort((a, b) => b.p - a.p);
-  bids.sort((a, b) => b.p - a.p);
   const maxA = Math.max(...asks.map(x => x.s));
   const maxB = Math.max(...bids.map(x => x.s));
   const row = (side, lv, max) => {
@@ -265,43 +365,48 @@ function renderBook() {
   };
   document.getElementById('asks').innerHTML = asks.map(lv => row('ask', lv, maxA)).join('');
   document.getElementById('bids').innerHTML = bids.map(lv => row('bid', lv, maxB)).join('');
-  const spread = (asks[asks.length - 1].p - bids[0].p);
-  document.getElementById('midline').textContent = fmt(mid) + '  ·  spread ' + Math.abs(spread).toFixed(2);
-  document.getElementById('qbid').textContent = fmt(bids[0].p);
-  document.getElementById('qask').textContent = fmt(asks[asks.length - 1].p);
+  const bestAsk = asks[asks.length - 1].p;
+  const bestBid = bids[0].p;
+  document.getElementById('midline').textContent = fmt(mid) + '  ·  spread ' + (bestAsk - bestBid).toFixed(2);
+  document.getElementById('qbid').textContent = fmt(bestBid);
+  document.getElementById('qask').textContent = fmt(bestAsk);
+  document.getElementById('spr').textContent = (3.58 + (Math.random() - 0.5) * 0.04).toFixed(2);
 }
 
 function tickPrice() {
-  const last = candles[candles.length - 1];
-  const nxt = last.c + (Math.random() - 0.47) * 0.08;
-  last.c = nxt;
-  last.h = Math.max(last.h, nxt);
-  last.l = Math.min(last.l, nxt);
-  if (Math.random() < 0.18) {
-    candles.push({ t: Date.now(), o: nxt, h: nxt, l: nxt, c: nxt });
-    if (candles.length > 120) candles.shift();
-  }
+  const prev = ticks[ticks.length - 1].p;
+  const nxt = prev + (Math.random() - 0.47) * 0.07;
+  ticks.push({ t: Date.now(), p: nxt });
+  if (ticks.length > 30000) ticks.splice(0, ticks.length - 20000);
   mid = nxt;
-  const chg = mid - 91.18;
+  const base = ticks[Math.max(0, ticks.length - 240)].p;
+  const chg = mid - base;
   const el = document.getElementById('chg');
-  el.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '  ·  ' + (chg >= 0 ? '+' : '') + ((chg / 91.18) * 100).toFixed(2) + '%';
+  el.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '  ·  ' + (chg >= 0 ? '+' : '') + ((chg / base) * 100).toFixed(2) + '%';
   el.className = chg >= 0 ? 'up' : 'dn';
   document.getElementById('px').textContent = fmt(mid);
   document.getElementById('brent').textContent = (mid + 3.58).toFixed(2);
-  const pnl = (mid - 91.20) * 10;
-  const pe = document.getElementById('openpnl');
-  pe.textContent = (pnl >= 0 ? '+' : '-') + '$' + Math.abs(pnl).toFixed(0);
-  pe.className = pnl >= 0 ? 'up' : 'dn';
+  managePositions();
+  renderAccount();
+  renderBlotter();
   draw();
 }
+
+document.getElementById('tfs').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('button');
+  if (!btn) return;
+  tf = +btn.dataset.tf;
+  document.querySelectorAll('#tfs button').forEach(b => b.classList.toggle('on', b === btn));
+  draw();
+});
 
 function clock() {
   document.getElementById('clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
-
 window.addEventListener('resize', resize);
 clock(); setInterval(clock, 1000);
 renderBook(); setInterval(renderBook, 450);
+renderAccount(); renderBlotter();
 setInterval(tickPrice, 700);
 resize();
 </script>
