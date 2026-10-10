@@ -1,3 +1,5 @@
+from typing import Dict
+
 """Alternative data — AIS, COT proxy, refinery."""
 
 class AlternativeData:
