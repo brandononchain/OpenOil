@@ -32,6 +32,9 @@ charts = ChartGenerator()
 predictor = PricePredictor()
 risk_analyzer = RiskAnalyzer()
 
+# Mock historical series (replace with real feed later)
+HIST_PRICES = [88.2, 88.9, 89.4, 90.1, 89.7, 90.5, 91.2, 90.8, 91.6, 91.1, 91.8, 91.5, 92.0, 91.7, 91.52]
+
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html>
@@ -53,6 +56,8 @@ DASHBOARD_HTML = """
   a:hover { text-decoration:underline; }
   ascii-art { display:block; margin:8px 0; }
   .trade-row { font-size:13px; padding:2px 0; border-bottom:1px solid #222; }
+  .spark { font-size:16px; letter-spacing:1px; color:#00ff9f; margin:6px 0; }
+  .chart-meta { font-size:12px; color:#666; }
 </style>
 <script type="module" src="https://ascii.rest/ascii.js"></script>
 </head>
@@ -68,9 +73,12 @@ DASHBOARD_HTML = """
   </div>
 
   <div class="panel">
-    <div class="row"><span class="label">LIVE CHART</span><span class="value">WTI CANDLESTICKS</span></div>
+    <div class="row"><span class="label">CHART</span><span class="value">LIVE + HISTORICAL</span></div>
+    <div class="chart-meta">Historical (last ~15 bars)</div>
+    <div class="spark" id="spark"></div>
+    <div class="chart-meta" style="margin-top:10px">Live forming candle</div>
     <ascii-art piece="candlesticks" options='{"start":91.5,"seed":42}'></ascii-art>
-    <div class="row" style="margin-top:8px"><span class="label">WTI</span><span class="value">$91.52</span></div>
+    <div class="row" style="margin-top:8px"><span class="label">WTI</span><span class="value" id="wti">$91.52</span></div>
     <div class="row"><span class="label">BRENT</span><span class="value">$95.10</span></div>
     <div class="row"><span class="label">SPREAD</span><span class="value">3.58</span></div>
   </div>
@@ -112,6 +120,27 @@ DASHBOARD_HTML = """
 <script>
 function tick(){ document.getElementById('clock').textContent = new Date().toISOString().slice(0,19).replace('T',' '); }
 tick(); setInterval(tick, 1000);
+
+function sparkline(values) {
+  if (!values || values.length < 2) return '▁'.repeat(30);
+  const mn = Math.min(...values), mx = Math.max(...values);
+  const rng = (mx - mn) || 1;
+  const blocks = '▁▂▃▄▅▆▇█';
+  return values.map(v => blocks[Math.min(7, Math.floor((v - mn) / rng * 7))]).join('');
+}
+
+const hist = """ + str(HIST_PRICES) + """;
+document.getElementById('spark').textContent = sparkline(hist);
+
+// Light live tick simulation on the last price
+setInterval(() => {
+  const last = hist[hist.length - 1];
+  const next = +(last + (Math.random() - 0.48) * 0.15).toFixed(2);
+  hist.push(next);
+  if (hist.length > 40) hist.shift();
+  document.getElementById('spark').textContent = sparkline(hist);
+  document.getElementById('wti').textContent = '$' + next.toFixed(2);
+}, 3000);
 </script>
 </body>
 </html>
@@ -128,6 +157,10 @@ def dashboard():
 @app.get("/health")
 def health():
     return {"status": "healthy", "time": datetime.utcnow().isoformat()}
+
+@app.get("/price")
+def price():
+    return {"symbol": "USOIL", "last": HIST_PRICES[-1], "history": HIST_PRICES[-20:]}
 
 if __name__ == "__main__":
     import uvicorn
