@@ -1,7 +1,5 @@
 # OpenOil
 
-![OpenOil Header](docs/header.jpg)
-
 **Open-source intelligence layer for WTI crude oil markets.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -11,12 +9,6 @@
 OpenOil continuously analyzes multi-timeframe technicals, EIA inventories, news sentiment, order flow, and alternative data. It synthesizes signals through multi-agent debate, applies regime-aware risk controls, and optionally routes execution to MetaTrader 5 via MCP. All material decisions can be gated by human approval and are written to an immutable audit log.
 
 **Site:** [openoil.si](https://openoil.si) · **Source:** [github.com/brandononchain/OpenOil](https://github.com/brandononchain/OpenOil)
-
-## Screenshots
-
-| Live Dashboard | Regime View |
-|----------------|-------------|
-| ![Dashboard](docs/dashboard_preview.jpg) | ![Regime](docs/regime_preview.jpg) |
 
 ## Capabilities
 
@@ -56,6 +48,12 @@ Available endpoints:
 - `/market` — WTI, Brent, and spread snapshot
 - `/predict` — multi-horizon forecasts
 - `/risk` — quantitative risk metrics
+
+## Project Layout
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the intended package structure.
+
+Current code lives at the root for simplicity. The long-term layout moves runtime modules under `openoil/` and keeps plugins, docs, and tests at the top level.
 
 ## Architecture
 
