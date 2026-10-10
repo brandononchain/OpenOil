@@ -1,72 +1,105 @@
 # OpenOil — Open Source ASI for Crude Oil Markets
 
-**openoil.si** — Artificial Super Intelligence for WTI crude oil: multi-timeframe technicals, EIA inventories, geopolitics/news sentiment (including Trump/Iran), LLM reasoning, and MT5 execution via MCP.
+**Domain:** openoil.si  
+**Repo:** https://github.com/brandononchain/OpenOil
 
-## Vision
-A production-grade, open-source system that continuously analyzes, reasons about, and can trade crude oil with human-level (and eventually superhuman) market understanding. Designed as the intelligence layer that pairs with any MT5 terminal.
+OpenOil is a production-oriented, open-source Artificial Super Intelligence layer for WTI crude oil. It continuously analyzes multi-timeframe technicals, fundamentals (EIA), geopolitics/news sentiment, order flow, alternative data, and generates forecasts, risk metrics, and optional MT5 execution signals.
 
-## Current Capabilities
-- Full multi-timeframe analysis (M1–W1) with EMA, RSI, MACD, ATR, Bollinger confluence
-- Automatic EIA inventory pulls + week-over-week bias
-- Multi-source news + refined geopolitics sentiment (Trump, Iran, Hormuz, hurricanes)
-- LLM reasoning layer (narrative, adjusted bias, invalidation levels)
-- Position monitoring + trailing stops
-- Order execution via MT5 MCP
-- ASCII-styled live dashboard (`/dashboard`) using ascii.rest components
-- Full historical OHLC + tick + symbol info pulls when MCP is available
+## Features
+
+- Multi-timeframe technical confluence (EMA, RSI, MACD, ATR, Bollinger)
+- Live EIA inventory pulls + bias
+- Multi-source news + geopolitics sentiment (including Trump/Iran)
+- LLM reasoning + causal/counterfactual analysis
+- Memory graph with hybrid retrieval
+- Multi-agent debate (Technical, Fundamental, Geopolitics, Risk + Coordinator)
+- Self-improvement loop with closed-position feedback and dynamic weights
+- Data Oracle preferring MT5 MCP ticks/DOM
+- Ensemble forecasting + regime detection
+- Dynamic risk engine + human-in-the-loop governance + immutable audit log
+- Real-time order flow (CVD, aggressor classification)
+- Alternative data (AIS Hormuz, COT proxy, refinery signals)
+- Sentiment trends + real-time alerts + whale liquidity detection
+- Multi-horizon price prediction + quantitative risk (VaR, ES)
+- Live WTI/Brent/spread market data
+- ASCII charts and dashboards
+- **Plugin architecture** for community agents and connectors
 - Railway-ready Docker deployment
 
-## Expanded Live Market Data
-- Live WTI + Brent prices and Brent-WTI spread from AmericasOilWatch public API.
-- Full snapshot including stocks.
-- New endpoint: `GET /market` returns WTI, Brent, spread, and stocks in one call.
-
-## Architecture
-```
-Railway / any Linux host          Windows VPS (or local)
-┌─────────────────────────┐       ┌────────────────────┐
-│ OpenOil Intelligence   │ HTTP  │ MetaTrader 5        │
-│ (this repo)            │◄─────►│ + MCP Server        │
-│ Analysis + Reasoning   │ MCP   │ (native or wrapper) │
-│ Dashboard + API        │       │ Order execution     │
-└─────────────────────────┘       └─────────────────────┘
-```
-
 ## Quick Start
+
 ```bash
 git clone https://github.com/brandononchain/OpenOil.git
 cd OpenOil
 pip install -r requirements.txt
-export MT5_MCP_ENDPOINT=http://your-mt5-mcp:8000   # optional
-export LLM_API_KEY=your_key                         # optional
 python oil_super_intelligence.py
-# Visit http://localhost:8000/dashboard
-# Visit http://localhost:8000/market for live WTI/Brent/spread
+```
+
+- Dashboard: http://localhost:8000/dashboard
+- Regime: http://localhost:8000/regime
+- Charts: http://localhost:8000/charts
+- Market: http://localhost:8000/market
+
+## Plugin Architecture
+
+Drop Python files into the `plugins/` directory. Implement `register_agent()` or `register_connector()` and they are auto-discovered at startup.
+
+Example agent plugin:
+
+```python
+def my_agent(context: dict) -> dict:
+    return {"bias": 0.2, "view": "Custom view"}
+
+def register_agent():
+    return "my_agent", my_agent
 ```
 
 ## Environment Variables
-- `MT5_MCP_ENDPOINT` — MT5 MCP server URL
-- `MT5_SYMBOL` — e.g. USOIL, CL, OIL.f
-- `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`
-- `EIA_API_KEY` — optional official EIA key
-- `RISK_PER_TRADE`, `MAX_POSITIONS`, `ACCOUNT_BALANCE`
 
-## Path to True ASI
-To evolve OpenOil into a genuine artificial super intelligence for oil markets:
+| Variable | Description |
+|----------|-------------|
+| `MT5_MCP_ENDPOINT` | MT5 MCP server URL |
+| `MT5_SYMBOL` | Trading symbol (USOIL, CL, etc.) |
+| `LLM_API_KEY` | Optional LLM key |
+| `EIA_API_KEY` | Optional official EIA key |
+| `RISK_PER_TRADE` | Position risk fraction |
+| `ACCOUNT_BALANCE` | Account size for sizing |
 
-1. **Persistent Memory Graph** — Store every analysis, news event, EIA print, and trade outcome in a vector + graph DB. Retrieve relevant historical analogs before every decision.
-2. **Multi-Agent Reasoning** — Separate agents for technicals, fundamentals, geopolitics, and risk. Debate and synthesize via a coordinator.
-3. **Self-Improvement Loop** — Track signal accuracy, PnL attribution, and regime performance. Auto-tune weights and generate new features.
-4. **Causal & Counterfactual Reasoning** — LLM + structured models that ask “what if Hormuz reopens tomorrow?” and update probabilities.
-5. **Tick-Level Microstructure** — When MCP supports it, incorporate order-flow imbalance, depth, and high-frequency patterns.
-6. **Ensemble Forecasting** — Combine statistical models, neural nets (trained on the memory graph), and LLM scenario analysis.
-7. **Risk Engine with Regime Detection** — Dynamic position sizing, correlation filters (USD, gold, equities), and volatility targeting.
-8. **Human-in-the-Loop Governance** — Approval queues for high-impact trades, audit logs, and explainability traces.
-9. **Continuous Data Expansion** — Shipping AIS, refinery outages, satellite inventory estimates, CFTC positioning, options skew.
-10. **Open Community** — Plugin architecture so others can contribute agents, data connectors, and execution adapters.
+## Architecture
+
+```
+Linux host (Railway / VPS)          Windows VPS (MT5)
+┌──────────────────────────┐ HTTP   ┌──────────────────┐
+│ OpenOil Intelligence    │◄──────►│ MetaTrader 5     │
+│ Analysis + Agents       │  MCP   │ + MCP Server     │
+│ Dashboard + API         │        │ Execution        │
+└──────────────────────────┘        └───────────────────┘
+```
+
+## Roadmap to True ASI
+
+1. Persistent memory graph with vector retrieval
+2. Multi-agent debate and synthesis
+3. Self-improvement from closed trades
+4. Causal / counterfactual reasoning
+5. Tick-level microstructure when MCP exposes DOM
+6. Ensemble forecasting
+7. Regime-aware dynamic risk
+8. Human governance + full audit traces
+9. Continuous alternative data expansion
+10. Community plugin ecosystem
+
+## Contributing
+
+1. Fork the repo
+2. Add agents or connectors in `plugins/`
+3. Open a PR with tests and docs
+4. Follow the MIT license
 
 ## License
-MIT — Open source for the community.
+
+MIT
 
 ## Disclaimer
-Educational / research software. Oil markets are volatile. Always test on demo. Past performance does not guarantee future results.
+
+Educational and research software only. Oil markets are volatile. Always test on demo accounts. Past performance does not guarantee future results.
