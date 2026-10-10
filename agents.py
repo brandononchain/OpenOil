@@ -6,6 +6,7 @@ They produce structured views that a coordinator synthesizes.
 
 from typing import Dict, Any, List
 import json
+from plugins import registry as plugin_registry
 
 class Agent:
     def __init__(self, name: str, role: str):
@@ -72,7 +73,7 @@ class RiskAgent(Agent):
         atr = analysis.get("atr", 1.5)
         return {
             "agent": self.name,
-            "bias": 0.0,  # risk is overlay
+            "bias": 0.0,
             "confidence": 0.6,
             "key_points": [f"ATR ~ {atr}", "Max positions enforced"],
             "summary": "Risk parameters within bounds; ATR-based stops recommended."
@@ -86,16 +87,29 @@ class Coordinator:
             GeopoliticsAgent(),
             RiskAgent()
         ]
+        self.plugin_agents = plugin_registry.get_agents()
 
     def debate(self, context: Dict) -> Dict:
         views = [agent.analyze(context) for agent in self.agents]
-        # Simple weighted synthesis
-        weights = {"Technical": 0.35, "Fundamental": 0.25, "Geopolitics": 0.25, "Risk": 0.15}
-        weighted_bias = sum(v["bias"] * weights.get(v["agent"], 0.25) for v in views)
-        avg_conf = sum(v["confidence"] for v in views) / len(views)
+        for name, fn in self.plugin_agents.items():
+            try:
+                plugin_view = fn(context)
+                if isinstance(plugin_view, dict):
+                    plugin_view.setdefault("agent", name)
+                    views.append(plugin_view)
+            except Exception:
+                pass
+        weights = {"Technical": 0.3, "Fundamental": 0.2, "Geopolitics": 0.2, "Risk": 0.1}
+        plugin_weight = 0.2 / max(1, len(self.plugin_agents))
+        weighted_bias = 0
+        for v in views:
+            w = weights.get(v.get("agent"), plugin_weight)
+            weighted_bias += v.get("bias", 0) * w
+        avg_conf = sum(v.get("confidence", 0.5) for v in views) / max(1, len(views))
         return {
             "views": views,
             "synthesized_bias": round(max(-1, min(1, weighted_bias)), 3),
             "avg_confidence": round(avg_conf, 2),
-            "consensus": "strong" if abs(weighted_bias) > 0.4 else "moderate" if abs(weighted_bias) > 0.15 else "weak"
+            "consensus": "strong" if abs(weighted_bias) > 0.4 else "moderate" if abs(weighted_bias) > 0.15 else "weak",
+            "plugin_agents_used": list(self.plugin_agents.keys())
         }
