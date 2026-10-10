@@ -1,6 +1,6 @@
 """Sentiment analysis from news sources."""
 
-from typing import Dict
+from typing import Dict, List
 
 class SentimentAnalyzer:
     def score(self, headlines: List[str] = None) -> Dict:
