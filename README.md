@@ -26,6 +26,10 @@ OpenOil is a production-oriented, open-source Artificial Super Intelligence laye
 - **Plugin architecture** for community agents and connectors
 - Railway-ready Docker deployment
 
+## Real-Time Charts & News Feed
+- `/charts` — live HTML page with ASCII sparklines for WTI/Brent + recent news headlines (auto-refreshes every 20s).
+- `/charts.json` — JSON version of the same data for API consumers.
+
 ## Quick Start
 
 ```bash
@@ -69,7 +73,7 @@ def register_agent():
 
 ```
 Linux host (Railway / VPS)          Windows VPS (MT5)
-┌──────────────────────────┐ HTTP   ┌──────────────────┐
+┌──────────────────────────┐ HTTP   ┌───────────────────┐
 │ OpenOil Intelligence    │◄──────►│ MetaTrader 5     │
 │ Analysis + Agents       │  MCP   │ + MCP Server     │
 │ Dashboard + API         │        │ Execution        │
