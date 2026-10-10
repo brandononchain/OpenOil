@@ -5,8 +5,14 @@ Run: python -m openoil.main
 
 import os
 from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 from openoil.memory_graph import MemoryGraph
 from openoil.agents import Coordinator
 from openoil.data_oracle import DataOracle
