@@ -1,5 +1,7 @@
 """Self-improvement from closed positions."""
 
+from typing import Dict
+
 class SelfImprovement:
     def record_signal(self, signal: Dict):
         pass
