@@ -16,6 +16,14 @@ A production-grade, open-source system that continuously analyzes, reasons about
 - Full historical OHLC + tick + symbol info pulls when MCP is available
 - Railway-ready Docker deployment
 
+## Live API Data
+- Public no-key endpoints from AmericasOilWatch:
+  - `GET /api/v1/wti` — current WTI price
+  - `GET /api/v1/us-stocks` — weekly petroleum stocks
+- Integrated into analysis as primary live price source (yfinance fallback).
+- New endpoint: `GET /live` returns current price + stocks.
+- Optional: set `OILPRICEAPI_KEY` for OilPriceAPI (WTI/Brent futures, historical) if you want a commercial feed.
+
 ## Architecture
 ```
 Railway / any Linux host          Windows VPS (or local)
