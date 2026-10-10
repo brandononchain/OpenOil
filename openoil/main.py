@@ -17,6 +17,7 @@ from openoil.sentiment import SentimentAnalyzer
 from openoil.alt_data import AlternativeData
 from openoil.charts import ChartGenerator
 from openoil.prediction_risk import PricePredictor, RiskAnalyzer
+from openoil.mt5_live import snapshot as mt5_snapshot
 
 app = FastAPI(title="OpenOil", version="0.1.0")
 
@@ -224,7 +225,9 @@ function draw() {
   const padL = 8, padR = 62, padT = 12, padB = 22;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   if (plotW < 20 || plotH < 20) return;
-  const view = bars(tf).slice(-60);
+  const view = (liveMode && window.__mt5Bars && window.__mt5Bars.length)
+    ? window.__mt5Bars.slice(-60)
+    : bars(tf).slice(-60);
   if (!view.length) return;
   let lo = Math.min(...view.map(c => c.l));
   let hi = Math.max(...view.map(c => c.h));
@@ -374,6 +377,7 @@ function renderBook() {
 }
 
 function tickPrice() {
+  if (liveMode) return;
   const prev = ticks[ticks.length - 1].p;
   const nxt = prev + (Math.random() - 0.47) * 0.07;
   ticks.push({ t: Date.now(), p: nxt });
@@ -403,10 +407,40 @@ document.getElementById('tfs').addEventListener('click', (ev) => {
 function clock() {
   document.getElementById('clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
+let liveMode = false;
+
+async function pullMt5() {
+  try {
+    const res = await fetch('/mt5/snapshot');
+    const data = await res.json();
+    if (!data || !data.connected) return;
+    liveMode = true;
+    const badge = document.querySelector('header .up');
+    if (badge) badge.textContent = 'MT5';
+    const note = document.querySelector('header .muted');
+    if (data.account && typeof data.account === 'object' && data.account.balance != null) {
+      const a = data.account;
+      document.getElementById('bal').textContent = money(Number(a.balance));
+      document.getElementById('eq').textContent = money(Number(a.equity ?? a.balance));
+      document.getElementById('mu').textContent = money(Number(a.margin || 0));
+      document.getElementById('fm').textContent = money(Number(a.margin_free ?? (Number(a.equity || a.balance) - Number(a.margin || 0))));
+      document.getElementById('ml').textContent = a.margin_level != null ? Number(a.margin_level).toFixed(0) + '%' : '—';
+    }
+    if (Array.isArray(data.bars) && data.bars.length) {
+      window.__mt5Bars = data.bars;
+      const last = data.bars[data.bars.length - 1];
+      mid = last.c;
+      document.getElementById('px').textContent = fmt(mid);
+      draw();
+    }
+  } catch (err) {}
+}
+
 window.addEventListener('resize', resize);
 clock(); setInterval(clock, 1000);
 renderBook(); setInterval(renderBook, 450);
 renderAccount(); renderBlotter();
+pullMt5(); setInterval(pullMt5, 5000);
 setInterval(tickPrice, 700);
 resize();
 </script>
@@ -421,6 +455,10 @@ def root():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     return DASHBOARD_HTML
+
+@app.get("/mt5/snapshot")
+def mt5_state():
+    return mt5_snapshot()
 
 @app.get("/health")
 def health():
