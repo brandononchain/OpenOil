@@ -1,5 +1,7 @@
 # OpenOil
 
+![OpenOil Header](docs/header.jpg)
+
 **Open-source intelligence layer for WTI crude oil markets.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -14,7 +16,7 @@ OpenOil continuously analyzes multi-timeframe technicals, EIA inventories, news 
 
 | Live Dashboard | Regime View |
 |----------------|-------------|
-| ![Dashboard](dashboard_preview.jpg) | ![Regime](regime_preview.jpg) |
+| ![Dashboard](docs/dashboard_preview.jpg) | ![Regime](docs/regime_preview.jpg) |
 
 ## Capabilities
 
