@@ -104,7 +104,16 @@ def _news() -> Dict:
 
 def build() -> Dict:
     live = os.getenv("OPENOIL_LIVE", "0") == "1"
-    snap = snapshot()
+    snap = None
+    try:
+        from plugins import registry as plugin_registry
+        pull = plugin_registry.get_connectors().get("mt5-terminal")
+        if pull:
+            snap = pull()
+    except Exception:
+        snap = None
+    if not isinstance(snap, dict):
+        snap = snapshot()
     bars = snap.get("bars") or []
     account = snap.get("account") if isinstance(snap.get("account"), dict) else None
     positions = _positions(snap.get("positions"))
