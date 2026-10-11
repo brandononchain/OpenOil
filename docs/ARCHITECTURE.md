@@ -44,8 +44,7 @@ uvicorn openoil.main:app --host 0.0.0.0 --port 8000
 
 ## Design Principles
 
-- Root stays clean (README, requirements, Docker, railway).
-- All runtime code lives under `openoil/`.
-- Plugins stay outside the package.
-- Docs and tests are top-level.
-- Single entry point.
+- Root stays clean (README, requirements, Docker, railway, scripts).
+- All runtime code lives under `openoil/`. There is one copy of each module.
+- The desk refuses to draw a price unless MT5 (or the MetaTrader market-data server) returned candles.
+- `OPENOIL_LIVE` defaults off. The poll loop never sends an order.
