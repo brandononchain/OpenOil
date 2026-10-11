@@ -10,7 +10,7 @@ import sys
 from typing import Dict, List, Any, Callable
 from pathlib import Path
 
-PLUGIN_DIR = Path(__file__).parent / "plugins"
+PLUGIN_DIR = Path(__file__).parent
 
 class PluginRegistry:
     def __init__(self):
