@@ -7,6 +7,7 @@ Never log the API key.
 
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -81,7 +82,7 @@ class McpHttp:
         self.request("notifications/initialized", notify=True)
         return result
 
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> List[Dict]:
         if not self.session_id:
             init = self.initialize()
             if isinstance(init, dict) and str(init.get("error", "")).startswith("HTTP"):
@@ -94,7 +95,7 @@ class McpHttp:
         if not tools and isinstance(payload, dict):
             result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
             tools = result.get("tools") or []
-        return [tool["name"] for tool in tools if isinstance(tool, dict) and tool.get("name")]
+        return [tool for tool in tools if isinstance(tool, dict) and tool.get("name")]
 
     def call_tool(self, name: str, arguments: Dict) -> Any:
         if not self.session_id:
@@ -194,36 +195,81 @@ def _missing_tool(raw: Any) -> bool:
     return "tool not found" in blob or "unknown tool" in blob
 
 
-def _terminal_history(client: McpHttp, symbol: str):
-    """get_chart_history lives on the terminal server. Open the chart first so history is loaded."""
-    names = client.list_tools()
-    now = datetime.now(timezone.utc)
-    start_iso = (now - timedelta(days=10)).strftime("%Y-%m-%dT00:00:00Z")
-    end_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    start_day = (now - timedelta(days=10)).strftime("%Y-%m-%d")
-    end_day = now.strftime("%Y-%m-%d")
-    start_mt = (now - timedelta(days=10)).strftime("%Y.%m.%d 00:00")
-    end_mt = now.strftime("%Y.%m.%d %H:%M")
-    for period in ("M15", "H1"):
-        client.call_tool("chart_open", {"symbol": symbol, "period": period})
-    attempts = [
-        {"symbol": symbol, "period": "M15", "from": start_iso, "to": end_iso},
-        {"symbol": symbol, "period": "M15", "from": start_day, "to": end_day},
-        {"symbol": symbol, "period": "PERIOD_M15", "from": start_mt, "to": end_mt},
-        {"symbol": symbol, "timeframe": "M15", "date_from": start_iso, "date_to": end_iso},
-        {"symbol": symbol, "period": "H1", "from": start_day, "to": end_day},
+def _tool_names(tools: List[Dict]) -> List[str]:
+    return [tool.get("name", "") for tool in tools]
+
+
+def _schema_for(tools: List[Dict], name: str) -> Dict:
+    for tool in tools:
+        if tool.get("name") == name:
+            return tool.get("inputSchema") or tool.get("input_schema") or {}
+    return {}
+
+
+def _history_attempts(schema: Dict, symbol: str, start: datetime, end: datetime) -> List[Dict]:
+    """Prefer the tool's own argument names. MetaTrader datetimes are unix seconds or YYYY.MM.DD HH:MM:SS."""
+    props = (schema or {}).get("properties") or {}
+    start_unix = int(start.timestamp())
+    end_unix = int(end.timestamp())
+    start_mt = start.strftime("%Y.%m.%d %H:%M:%S")
+    end_mt = end.strftime("%Y.%m.%d %H:%M:%S")
+    if props:
+        built = []
+        for numeric in (True, False):
+            args: Dict[str, Any] = {}
+            for key, spec in props.items():
+                low = key.lower()
+                typ = (spec or {}).get("type")
+                if "symbol" in low:
+                    args[key] = symbol
+                elif low in ("period", "timeframe", "tf", "chart_period"):
+                    args[key] = 15 if typ == "integer" else "M15"
+                elif any(part in low for part in ("from", "start", "begin", "since")):
+                    args[key] = start_unix if typ in ("integer", "number") or numeric else start_mt
+                elif any(part in low for part in ("to", "end", "until")) and "timeframe" not in low:
+                    args[key] = end_unix if typ in ("integer", "number") or numeric else end_mt
+                elif any(part in low for part in ("count", "limit", "bars")):
+                    args[key] = 300
+            if args and args not in built:
+                built.append(args)
+        if built:
+            return built
+    return [
+        {"symbol": symbol, "period": "M15", "from": start_unix, "to": end_unix},
+        {"symbol": symbol, "period": "PERIOD_M15", "from": start_unix, "to": end_unix},
+        {"symbol": symbol, "period": "M15", "from": start_mt, "to": end_mt},
+        {"symbol": symbol, "timeframe": "M15", "from": start_unix, "to": end_unix},
+        {"symbol": symbol, "period": "H1", "from": start_unix, "to": end_unix},
     ]
+
+
+def _terminal_history(client: McpHttp, symbol: str):
+    """get_chart_history is a terminal tool. Open the chart, then request a closed unix range."""
+    tools = client.list_tools()
+    names = _tool_names(tools)
+    schema = _schema_for(tools, "get_chart_history")
+    end = datetime.now(timezone.utc) - timedelta(minutes=2)
+    clock = client.call_tool("get_time_information", {})
+    if isinstance(clock, dict):
+        for key in ("server_time", "time", "datetime", "now"):
+            if clock.get(key):
+                break
+    start = end - timedelta(days=5)
+    client.call_tool("chart_open", {"symbol": symbol, "period": "M15"})
+    time.sleep(1.5)
     if names and "get_chart_history" not in names:
-        return [], {"error": "get_chart_history is not in tools/list", "tools": names}, names
+        return [], {"error": "get_chart_history is not in tools/list", "schema": schema}, names, schema
     last = None
-    for args in attempts:
+    for args in _history_attempts(schema, symbol, start, end):
         last = client.call_tool("get_chart_history", args)
         if _missing_tool(last):
-            return [], last, names
+            return [], last, names, schema
         bars = _bars_from(last)
         if bars:
-            return bars, None, names
-    return [], last, names
+            return bars, None, names, schema
+        if isinstance(last, dict) and "invalid datetime" not in json.dumps(last).lower():
+            break
+    return [], {"reply": last, "schema": list((schema.get("properties") or {}).keys())}, names, schema
 
 
 def _market_history(client: McpHttp, symbol: str):
@@ -306,9 +352,10 @@ def snapshot(symbol: str = "") -> Dict:
                 parsed = _account_from(acct)
                 out["account"] = parsed
                 out["positions"] = term.call_tool("get_trading_open_positions", {})
-                bars, raw, tools = _terminal_history(term, symbol)
+                bars, raw, tools, schema = _terminal_history(term, symbol)
                 out["bars"] = bars
                 out["tools"] = tools
+                out["history_schema"] = list((schema.get("properties") or {}).keys())
                 if bars:
                     out["price_source"] = "terminal"
                     out["connected"] = True
