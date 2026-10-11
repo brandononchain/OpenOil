@@ -195,6 +195,32 @@ def _missing_tool(raw: Any) -> bool:
     return "tool not found" in blob or "unknown tool" in blob
 
 
+def bars_from_terminal(symbol: str):
+    """Broker candles through the MetaTrader5 terminal API. No datetime-range guess."""
+    try:
+        import MetaTrader5 as mt5
+    except ImportError:
+        return [], "Run: python -m pip install MetaTrader5"
+    if not mt5.initialize():
+        return [], f"MetaTrader5.initialize failed: {mt5.last_error()}"
+    if mt5.symbol_info(symbol) is None:
+        return [], f"{symbol} is not on this terminal: {mt5.last_error()}"
+    mt5.symbol_select(symbol, True)
+    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 300)
+    if rates is None or len(rates) == 0:
+        return [], f"No M15 bars for {symbol}: {mt5.last_error()}"
+    bars = []
+    for row in rates:
+        bars.append({
+            "t": int(row["time"]),
+            "o": float(row["open"]),
+            "h": float(row["high"]),
+            "l": float(row["low"]),
+            "c": float(row["close"]),
+        })
+    return bars, None
+
+
 def _tool_names(tools: List[Dict]) -> List[str]:
     return [tool.get("name", "") for tool in tools]
 
@@ -352,20 +378,26 @@ def snapshot(symbol: str = "") -> Dict:
                 parsed = _account_from(acct)
                 out["account"] = parsed
                 out["positions"] = term.call_tool("get_trading_open_positions", {})
-                bars, raw, tools, schema = _terminal_history(term, symbol)
-                out["bars"] = bars
-                out["tools"] = tools
-                out["history_schema"] = list((schema.get("properties") or {}).keys())
+                bars, rate_error = bars_from_terminal(symbol)
                 if bars:
+                    out["bars"] = bars
                     out["price_source"] = "terminal"
                     out["connected"] = True
                     out["error"] = None
                 else:
-                    out["error"] = (
-                        f"{symbol} is the broker symbol. get_chart_history did not return candles. "
-                        f"Tools: {', '.join(tools) or 'tools/list empty'}. "
-                        f"Reply: {str(raw)[:220]}"
-                    )
+                    mcp_bars, raw, tools, schema = _terminal_history(term, symbol)
+                    out["bars"] = mcp_bars
+                    out["tools"] = tools
+                    out["history_schema"] = list((schema.get("properties") or {}).keys())
+                    if mcp_bars:
+                        out["price_source"] = "terminal"
+                        out["connected"] = True
+                        out["error"] = None
+                    else:
+                        out["error"] = rate_error or (
+                            f"{symbol} is the broker symbol. get_chart_history did not return candles. "
+                            f"Reply: {str(raw)[:220]}"
+                        )
         except Exception as exc:
             out["error"] = str(exc)
 
