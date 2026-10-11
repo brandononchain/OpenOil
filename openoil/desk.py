@@ -1,0 +1,185 @@
+"""Desk state. Prices come from MT5 only. No random walk."""
+
+import os
+import time
+from typing import Dict, List
+
+from openoil.agents import Coordinator
+from openoil.ensemble import EnsembleForecaster
+from openoil.governance import Governance
+from openoil.mt5_live import snapshot
+from openoil.prediction_risk import PricePredictor
+from openoil.risk_engine import RiskEngine
+from openoil.sentiment import SentimentAnalyzer
+
+coordinator = Coordinator()
+ensemble = EnsembleForecaster()
+governance = Governance()
+risk = RiskEngine()
+sentiment = SentimentAnalyzer()
+predictor = PricePredictor()
+
+_cache = {"news": None, "news_at": 0.0, "last_dir": None}
+
+
+def _num(value, default=0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _positions(raw) -> List[Dict]:
+    rows = raw
+    if isinstance(raw, dict):
+        for key in ("positions", "items", "data", "open_positions"):
+            if isinstance(raw.get(key), list):
+                rows = raw[key]
+                break
+        else:
+            return []
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        side = str(row.get("type") or row.get("side") or "")
+        if side in ("0", "buy", "BUY", "POSITION_TYPE_BUY"):
+            side = "BUY"
+        elif side in ("1", "sell", "SELL", "POSITION_TYPE_SELL"):
+            side = "SELL"
+        out.append({
+            "id": row.get("ticket") or row.get("id") or row.get("position") or "",
+            "symbol": row.get("symbol") or "",
+            "side": side,
+            "qty": row.get("volume") or row.get("lots") or row.get("qty"),
+            "entry": row.get("price_open") or row.get("price") or row.get("entry"),
+            "sl": row.get("sl") or row.get("price_sl"),
+            "tp": row.get("tp") or row.get("price_tp"),
+            "pnl": row.get("profit") or row.get("pnl"),
+            "status": "OPEN",
+        })
+    return out
+
+
+def _technical(bars: List[Dict]) -> Dict:
+    closes = [_num(bar["c"]) for bar in bars]
+    ranges = [abs(_num(bar["h"]) - _num(bar["l"])) for bar in bars]
+    atr = sum(ranges[-14:]) / max(1, min(14, len(ranges)))
+    look = closes[-20:] if len(closes) >= 20 else closes
+    base = look[0] or closes[-1]
+    move = (closes[-1] - base) / base if base else 0.0
+    bias = max(-1.0, min(1.0, move * 25))
+    return {
+        "overall_bias": round(bias, 3),
+        "strength": round(min(1.0, abs(move) * 30), 3),
+        "atr": round(atr, 4),
+        "last": closes[-1],
+        "change": round(closes[-1] - base, 4),
+        "change_pct": round(move * 100, 3),
+    }
+
+
+def _book(mid: float, depth) -> Dict:
+    if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
+        return {"source": "mt5", "label": "ORDER BOOK", "bids": depth.get("bids") or [], "asks": depth.get("asks") or []}
+    asks, bids = [], []
+    for i in range(1, 13):
+        asks.append({"price": round(mid + 0.02 * i, 2), "size": 20 + ((i * 37) % 180)})
+        bids.append({"price": round(mid - 0.02 * i, 2), "size": 20 + ((i * 53) % 180)})
+    return {"source": "sim", "label": "SIM BOOK", "asks": list(reversed(asks)), "bids": bids}
+
+
+def _news() -> Dict:
+    now = time.time()
+    if _cache["news"] is None or now - _cache["news_at"] > 60:
+        try:
+            _cache["news"] = sentiment.fetch_realtime()
+        except Exception as exc:
+            _cache["news"] = {"sentiment_bias": 0.0, "headlines": [], "error": str(exc)}
+        _cache["news_at"] = now
+    return _cache["news"] or {"sentiment_bias": 0.0}
+
+
+def build() -> Dict:
+    live = os.getenv("OPENOIL_LIVE", "0") == "1"
+    snap = snapshot()
+    bars = snap.get("bars") or []
+    account = snap.get("account") if isinstance(snap.get("account"), dict) else None
+    positions = _positions(snap.get("positions"))
+    base = {
+        "live_orders": live,
+        "symbol": snap.get("symbol"),
+        "error": snap.get("error"),
+        "price_source": snap.get("price_source"),
+        "account": account,
+        "positions": positions,
+        "bars": bars[-120:],
+        "note": "Orders stay off unless OPENOIL_LIVE=1. Nothing is sent automatically.",
+    }
+    if not bars:
+        base.update({
+            "mode": "offline",
+            "book": None,
+            "analysis": None,
+            "signals": [],
+            "quote": None,
+        })
+        return base
+
+    tech = _technical(bars)
+    news = _news()
+    context = {
+        "analysis": tech,
+        "eia": {"bias": 0.0},
+        "news": {"sentiment_bias": news.get("sentiment_bias", 0), "trump_mentions": news.get("trump_iran_mentions") or []},
+        "ofi": None,
+    }
+    debate = coordinator.debate(context)
+    forecast = ensemble.forecast({**context, "analysis": {**tech, "overall_bias": debate["synthesized_bias"]}})
+    regime = risk.detect_regime({"strength": tech["strength"], "total_score": tech["overall_bias"] * 10}, {"ofi": 0})
+    prediction = predictor.predict(
+        {"ensemble": forecast, "overall_bias": debate["synthesized_bias"], "strength": tech["strength"], "regime": regime},
+        tech["last"],
+        tech["atr"] or 0.5,
+    )
+    direction = forecast["direction"]
+    if direction != _cache["last_dir"]:
+        governance.audit("signal", {
+            "symbol": snap.get("symbol"),
+            "direction": direction,
+            "bias": forecast["ensemble_bias"],
+            "regime": regime["regime"],
+            "live_orders": live,
+            "sent": False,
+        })
+        if live and direction in ("BUY", "SELL"):
+            governance.request_approval(
+                {"action": direction, "symbol": snap.get("symbol"), "lots": 0.01},
+                {"overall_bias": debate["synthesized_bias"], "ensemble": forecast, "regime": regime},
+                reason="OPENOIL_LIVE is on. Queued. Not sent.",
+            )
+        _cache["last_dir"] = direction
+
+    last = tech["last"]
+    base.update({
+        "mode": "mt5",
+        "quote": {"last": last, "bid": round(last - 0.02, 2), "ask": round(last + 0.02, 2),
+                  "change": tech["change"], "change_pct": tech["change_pct"]},
+        "analysis": {
+            "ensemble": forecast["ensemble_bias"],
+            "regime": regime["regime"],
+            "sentiment": news.get("sentiment_bias", 0),
+            "atr": tech["atr"],
+            "target_4h": prediction["forecasts"]["4h"]["target"],
+            "target_24h": prediction["forecasts"]["24h"]["target"],
+        },
+        "signals": [
+            {"agent": view.get("agent"), "bias": view.get("bias"), "summary": view.get("summary")}
+            for view in debate["views"]
+        ],
+        "book": _book(last, snap.get("depth")),
+        "headlines": (news.get("headlines") or [])[:6],
+    })
+    return base
