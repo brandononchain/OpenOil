@@ -187,45 +187,92 @@ def _config():
     }
 
 
-def _history(client: McpHttp, symbol: str):
+def _missing_tool(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    blob = json.dumps(raw).lower()
+    return "tool not found" in blob or "unknown tool" in blob
+
+
+def _terminal_history(client: McpHttp, symbol: str):
+    """get_chart_history lives on the terminal server. Open the chart first so history is loaded."""
     names = client.list_tools()
-    known = {name.lower(): name for name in names}
     now = datetime.now(timezone.utc)
-    start = (now - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
-    end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    preferred = [
-        "get_chart_history",
-        "marketdata_symbol_history",
-        "get_rates",
-        "copy_rates_from_pos",
-        "get_ohlc_bars",
-        "get_candles_latest",
+    start_iso = (now - timedelta(days=10)).strftime("%Y-%m-%dT00:00:00Z")
+    end_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_day = (now - timedelta(days=10)).strftime("%Y-%m-%d")
+    end_day = now.strftime("%Y-%m-%d")
+    start_mt = (now - timedelta(days=10)).strftime("%Y.%m.%d 00:00")
+    end_mt = now.strftime("%Y.%m.%d %H:%M")
+    for period in ("M15", "H1"):
+        client.call_tool("chart_open", {"symbol": symbol, "period": period})
+    attempts = [
+        {"symbol": symbol, "period": "M15", "from": start_iso, "to": end_iso},
+        {"symbol": symbol, "period": "M15", "from": start_day, "to": end_day},
+        {"symbol": symbol, "period": "PERIOD_M15", "from": start_mt, "to": end_mt},
+        {"symbol": symbol, "timeframe": "M15", "date_from": start_iso, "date_to": end_iso},
+        {"symbol": symbol, "period": "H1", "from": start_day, "to": end_day},
     ]
-    chosen = []
-    for name in preferred:
-        if not names or name.lower() in known:
-            chosen.append(known.get(name.lower(), name))
-    for name in names:
-        low = name.lower()
-        if any(part in low for part in ("history", "candle", "rate", "ohlc", "bar")) and name not in chosen:
-            chosen.append(name)
-    arg_sets = [
-        {"symbol": symbol, "timeframe": "1h", "from": start, "to": end},
-        {"symbol": symbol, "period": "H1", "date_from": start, "date_to": end},
-        {"symbol": symbol, "timeframe": "H1", "count": 180},
-        {"symbol": symbol, "timeframe": "1h"},
-        {"symbol": symbol, "timeframe": "M15", "count": 180},
-    ]
+    if names and "get_chart_history" not in names:
+        return [], {"error": "get_chart_history is not in tools/list", "tools": names}, names
     last = None
-    for name in chosen:
-        for args in arg_sets:
-            last = client.call_tool(name, args)
-            if isinstance(last, dict) and "tool not found" in json.dumps(last).lower():
-                break
+    for args in attempts:
+        last = client.call_tool("get_chart_history", args)
+        if _missing_tool(last):
+            return [], last, names
+        bars = _bars_from(last)
+        if bars:
+            return bars, None, names
+    return [], last, names
+
+
+def _market_history(client: McpHttp, symbol: str):
+    """marketdata_symbol_history lives only on https://www.metatrader.com/mcp."""
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    end = now.strftime("%Y-%m-%d")
+    queries = [symbol, "WTI", "CL", "USOIL", "Crude Oil"]
+    symbols = []
+    for query in queries:
+        found = client.call_tool("marketdata_symbol_search", {"query": query})
+        if _missing_tool(found):
+            return [], found
+        symbols.extend(_symbol_names(found))
+    symbols = list(dict.fromkeys(symbols + queries))
+    last = None
+    for name in symbols[:8]:
+        for timeframe in ("1h", "4h", "1d"):
+            last = client.call_tool("marketdata_symbol_history", {
+                "symbol": name,
+                "timeframe": timeframe,
+                "from": start,
+                "to": end,
+            })
+            if _missing_tool(last):
+                return [], last
             bars = _bars_from(last)
             if bars:
-                return bars, None, names
-    return [], last, names
+                return bars, None
+    return [], last
+
+
+def _symbol_names(raw: Any) -> List[str]:
+    rows = raw if isinstance(raw, list) else []
+    if isinstance(raw, dict):
+        for key in ("symbols", "results", "items", "data"):
+            if isinstance(raw.get(key), list):
+                rows = raw[key]
+                break
+    names = []
+    for row in rows:
+        if isinstance(row, str):
+            names.append(row)
+        elif isinstance(row, dict):
+            for key in ("symbol", "ticker", "name"):
+                if row.get(key):
+                    names.append(str(row[key]))
+                    break
+    return names
 
 
 def snapshot(symbol: str = "") -> Dict:
@@ -259,17 +306,18 @@ def snapshot(symbol: str = "") -> Dict:
                 parsed = _account_from(acct)
                 out["account"] = parsed
                 out["positions"] = term.call_tool("get_trading_open_positions", {})
-                bars, raw, tools = _history(term, symbol)
+                bars, raw, tools = _terminal_history(term, symbol)
                 out["bars"] = bars
                 out["tools"] = tools
                 if bars:
                     out["price_source"] = "terminal"
                     out["connected"] = True
+                    out["error"] = None
                 else:
                     out["error"] = (
-                        f"{symbol} matches Market Watch. This terminal build did not return candles. "
-                        f"Tools it exposes: {', '.join(tools) or 'none'}. "
-                        f"Last reply: {str(raw)[:180]}"
+                        f"{symbol} is the broker symbol. get_chart_history did not return candles. "
+                        f"Tools: {', '.join(tools) or 'tools/list empty'}. "
+                        f"Reply: {str(raw)[:220]}"
                     )
         except Exception as exc:
             out["error"] = str(exc)
@@ -277,8 +325,7 @@ def snapshot(symbol: str = "") -> Dict:
     if not out["bars"] and cfg["market_key"]:
         market = McpHttp(cfg["market_url"], cfg["market_key"])
         try:
-            bars, raw, tools = _history(market, symbol)
-            out["tools"] = tools or out.get("tools")
+            bars, raw = _market_history(market, symbol)
             if bars:
                 out["bars"] = bars
                 out["price_source"] = "marketdata"
