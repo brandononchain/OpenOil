@@ -1,4 +1,9 @@
-"""Terminal connector. Candles come from get_chart_history on the local MCP server."""
+"""Terminal connector.
+
+Account and positions come from the local MCP server.
+Candles come from the MetaTrader5 terminal API, because get_chart_history
+rejects every datetime format we can see with 'invalid datetime range'.
+"""
 
 def pull(symbol: str = ""):
     from openoil.mt5_live import snapshot
