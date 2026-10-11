@@ -159,47 +159,93 @@ def _account_from(raw: Any) -> Optional[Dict]:
     return src
 
 
-def snapshot(symbol: str = SYMBOL) -> Dict:
-    """Account and history from the local terminal. History falls back to metatrader.com."""
+
+def _config():
+    return {
+        "terminal_url": os.getenv("MT5_MCP_ENDPOINT", "http://127.0.0.1:22346/mcp"),
+        "terminal_key": os.getenv("MT5_MCP_API_KEY", ""),
+        "market_url": os.getenv("MT5_MARKETDATA_ENDPOINT", "https://www.metatrader.com/mcp"),
+        "market_key": os.getenv("MT5_MARKETDATA_API_KEY", ""),
+        "symbol": os.getenv("MT5_SYMBOL", "USOIL"),
+    }
+
+
+def _history(client: McpHttp, symbol: str):
+    attempts = [
+        ("get_chart_history", {"symbol": symbol, "timeframe": "M15", "count": 180}),
+        ("get_chart_history", {"symbol": symbol, "period": "PERIOD_M15", "count": 180}),
+        ("get_chart_history", {"symbol": symbol, "timeframe": "15", "count": 180}),
+        ("marketdata_symbol_history", {"symbol": symbol, "timeframe": "1h"}),
+    ]
+    last = None
+    for name, args in attempts:
+        last = client.call_tool(name, args)
+        bars = _bars_from(last)
+        if bars:
+            return bars, None
+    return [], last
+
+
+def snapshot(symbol: str = "") -> Dict:
+    """Account and candles from the terminal. No invented prices."""
+    cfg = _config()
+    symbol = symbol or cfg["symbol"]
     out: Dict[str, Any] = {
         "connected": False,
         "symbol": symbol,
-        "terminal": TERMINAL_URL,
+        "terminal": cfg["terminal_url"],
         "account": None,
         "positions": None,
         "bars": [],
+        "depth": None,
         "quote": None,
+        "price_source": None,
         "error": None,
-        "note": "Closed markets still return the last quote, history, and account.",
+        "note": "A closed market still returns the last candles and the account. Prices are never simulated.",
     }
-    if not TERMINAL_KEY and not MARKET_KEY:
-        out["error"] = "Set MT5_MCP_API_KEY (local terminal) and restart. Do not commit the key."
+    if not cfg["terminal_key"] and not cfg["market_key"]:
+        out["error"] = "MT5_MCP_API_KEY is empty. Put it in the .env next to requirements.txt and restart."
         return out
 
-    if TERMINAL_KEY:
-        term = McpHttp(TERMINAL_URL, TERMINAL_KEY)
+    if cfg["terminal_key"]:
+        term = McpHttp(cfg["terminal_url"], cfg["terminal_key"])
         try:
             acct = term.call_tool("get_trading_account_info", {})
-            out["account"] = _account_from(acct) or acct
-            out["positions"] = term.call_tool("get_trading_open_positions", {})
-            bars = term.call_tool("get_chart_history", {"symbol": symbol, "timeframe": "M15", "count": 120})
-            if not _bars_from(bars):
-                bars = term.call_tool("get_chart_history", {"symbol": symbol, "period": "PERIOD_M15", "count": 120})
-            out["bars"] = _bars_from(bars)
-            out["connected"] = not (isinstance(acct, dict) and str(acct.get("error", "")).startswith("HTTP"))
-            if isinstance(acct, dict) and acct.get("error"):
-                out["error"] = acct.get("error")
+            if isinstance(acct, dict) and str(acct.get("error", "")).startswith("HTTP"):
+                out["error"] = f"Terminal MCP refused the key ({acct.get('error')}). Use the key next to 127.0.0.1, not the mq- key."
+            else:
+                parsed = _account_from(acct)
+                out["account"] = parsed
+                out["positions"] = term.call_tool("get_trading_open_positions", {})
+                bars, raw = _history(term, symbol)
+                out["bars"] = bars
+                if bars:
+                    out["price_source"] = "terminal"
+                    out["connected"] = True
+                else:
+                    watched = term.call_tool("get_marketwatch_symbols", {})
+                    out["error"] = (
+                        f"No candles for {symbol}. Match MT5_SYMBOL to Market Watch. "
+                        f"Tool reply: {str(raw)[:240]}"
+                    )
+                    if parsed:
+                        out["connected"] = True
+                    if isinstance(watched, dict) and watched.get("error"):
+                        out["error"] = out["error"]
         except Exception as exc:
             out["error"] = str(exc)
 
-    if not out["bars"] and MARKET_KEY:
-        market = McpHttp(MARKET_URL, MARKET_KEY)
+    if not out["bars"] and cfg["market_key"]:
+        market = McpHttp(cfg["market_url"], cfg["market_key"])
         try:
-            hist = market.call_tool("marketdata_symbol_history", {"symbol": symbol, "timeframe": "1h"})
-            out["bars"] = _bars_from(hist)
-            quote = market.call_tool("marketdata_symbol_get", {"symbol": symbol})
-            out["quote"] = quote
-            out["connected"] = out["connected"] or bool(out["bars"] or quote)
+            bars, raw = _history(market, symbol)
+            if bars:
+                out["bars"] = bars
+                out["price_source"] = "marketdata"
+                out["connected"] = True
+                out["error"] = None if out["account"] else "Using metatrader.com history. Account data still requires the local terminal."
+            elif not out["error"]:
+                out["error"] = f"Market data returned no candles for {symbol}: {str(raw)[:240]}"
         except Exception as exc:
             out["error"] = out["error"] or str(exc)
     return out
