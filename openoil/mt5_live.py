@@ -7,6 +7,7 @@ Never log the API key.
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -80,6 +81,21 @@ class McpHttp:
         self.request("notifications/initialized", notify=True)
         return result
 
+    def list_tools(self) -> List[str]:
+        if not self.session_id:
+            init = self.initialize()
+            if isinstance(init, dict) and str(init.get("error", "")).startswith("HTTP"):
+                return []
+        payload = self.request("tools/list", {})
+        data = _unwrap(payload)
+        tools = []
+        if isinstance(data, dict):
+            tools = data.get("tools") or []
+        if not tools and isinstance(payload, dict):
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            tools = result.get("tools") or []
+        return [tool["name"] for tool in tools if isinstance(tool, dict) and tool.get("name")]
+
     def call_tool(self, name: str, arguments: Dict) -> Any:
         if not self.session_id:
             init = self.initialize()
@@ -125,11 +141,12 @@ def _bars_from(raw: Any) -> List[Dict]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        o = row.get("open", row.get("o"))
-        h = row.get("high", row.get("h"))
-        l = row.get("low", row.get("l"))
-        c = row.get("close", row.get("c"))
-        t = row.get("time", row.get("t", row.get("datetime")))
+        lower = {str(k).lower(): v for k, v in row.items()}
+        o = lower.get("open", lower.get("o"))
+        h = lower.get("high", lower.get("h"))
+        l = lower.get("low", lower.get("l"))
+        c = lower.get("close", lower.get("c"))
+        t = lower.get("time", lower.get("t", lower.get("datetime")))
         if None in (o, h, l, c):
             continue
         out.append({"t": t, "o": float(o), "h": float(h), "l": float(l), "c": float(c)})
@@ -171,19 +188,44 @@ def _config():
 
 
 def _history(client: McpHttp, symbol: str):
-    attempts = [
-        ("get_chart_history", {"symbol": symbol, "timeframe": "M15", "count": 180}),
-        ("get_chart_history", {"symbol": symbol, "period": "PERIOD_M15", "count": 180}),
-        ("get_chart_history", {"symbol": symbol, "timeframe": "15", "count": 180}),
-        ("marketdata_symbol_history", {"symbol": symbol, "timeframe": "1h"}),
+    names = client.list_tools()
+    known = {name.lower(): name for name in names}
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
+    end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    preferred = [
+        "get_chart_history",
+        "marketdata_symbol_history",
+        "get_rates",
+        "copy_rates_from_pos",
+        "get_ohlc_bars",
+        "get_candles_latest",
+    ]
+    chosen = []
+    for name in preferred:
+        if not names or name.lower() in known:
+            chosen.append(known.get(name.lower(), name))
+    for name in names:
+        low = name.lower()
+        if any(part in low for part in ("history", "candle", "rate", "ohlc", "bar")) and name not in chosen:
+            chosen.append(name)
+    arg_sets = [
+        {"symbol": symbol, "timeframe": "1h", "from": start, "to": end},
+        {"symbol": symbol, "period": "H1", "date_from": start, "date_to": end},
+        {"symbol": symbol, "timeframe": "H1", "count": 180},
+        {"symbol": symbol, "timeframe": "1h"},
+        {"symbol": symbol, "timeframe": "M15", "count": 180},
     ]
     last = None
-    for name, args in attempts:
-        last = client.call_tool(name, args)
-        bars = _bars_from(last)
-        if bars:
-            return bars, None
-    return [], last
+    for name in chosen:
+        for args in arg_sets:
+            last = client.call_tool(name, args)
+            if isinstance(last, dict) and "tool not found" in json.dumps(last).lower():
+                break
+            bars = _bars_from(last)
+            if bars:
+                return bars, None, names
+    return [], last, names
 
 
 def snapshot(symbol: str = "") -> Dict:
@@ -217,28 +259,26 @@ def snapshot(symbol: str = "") -> Dict:
                 parsed = _account_from(acct)
                 out["account"] = parsed
                 out["positions"] = term.call_tool("get_trading_open_positions", {})
-                bars, raw = _history(term, symbol)
+                bars, raw, tools = _history(term, symbol)
                 out["bars"] = bars
+                out["tools"] = tools
                 if bars:
                     out["price_source"] = "terminal"
                     out["connected"] = True
                 else:
-                    watched = term.call_tool("get_marketwatch_symbols", {})
                     out["error"] = (
-                        f"No candles for {symbol}. Match MT5_SYMBOL to Market Watch. "
-                        f"Tool reply: {str(raw)[:240]}"
+                        f"{symbol} matches Market Watch. This terminal build did not return candles. "
+                        f"Tools it exposes: {', '.join(tools) or 'none'}. "
+                        f"Last reply: {str(raw)[:180]}"
                     )
-                    if parsed:
-                        out["connected"] = True
-                    if isinstance(watched, dict) and watched.get("error"):
-                        out["error"] = out["error"]
         except Exception as exc:
             out["error"] = str(exc)
 
     if not out["bars"] and cfg["market_key"]:
         market = McpHttp(cfg["market_url"], cfg["market_key"])
         try:
-            bars, raw = _history(market, symbol)
+            bars, raw, tools = _history(market, symbol)
+            out["tools"] = tools or out.get("tools")
             if bars:
                 out["bars"] = bars
                 out["price_source"] = "marketdata"
