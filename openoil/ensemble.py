@@ -40,16 +40,21 @@ class EnsembleForecaster:
         ofi = context.get("ofi")
         components["microstructure"] = ofi if ofi is not None else 0
 
-        # Weighted ensemble
-        ensemble_bias = sum(components.get(m, 0) * w.get(m, 0) for m in self.models)
+        used = ["technical", "fundamental", "geopolitics"]
+        if abs(components["microstructure"]) > 0.001:
+            used.append("microstructure")
+        if abs(components["llm_scenario"]) > 0.001:
+            used.append("llm_scenario")
+        total = sum(w.get(name, 0) for name in used) or 1
+        ensemble_bias = sum(components.get(name, 0) * w.get(name, 0) for name in used) / total
         ensemble_bias = max(-1.0, min(1.0, ensemble_bias))
 
         return {
             "ensemble_bias": round(ensemble_bias, 3),
             "components": {k: round(v, 3) for k, v in components.items()},
             "weights": w,
-            "direction": "BUY" if ensemble_bias > 0.15 else "SELL" if ensemble_bias < -0.15 else "HOLD",
-            "confidence": round(min(0.95, abs(ensemble_bias) * 1.1 + 0.2), 2)
+            "direction": "BUY" if ensemble_bias > 0.08 else "SELL" if ensemble_bias < -0.08 else "HOLD",
+            "confidence": round(min(0.95, abs(ensemble_bias) + 0.25), 2)
         }
 
     def update_weights(self, performance: Dict) -> Dict:
