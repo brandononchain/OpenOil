@@ -87,7 +87,35 @@ def _technical(bars: List[Dict]) -> Dict:
     }
 
 
-def _book(mid: float, depth) -> Dict:
+def _ticket(quote: Dict, tech: Dict, news: Dict) -> Dict:
+    """A trade, not an essay. Flat only when the tape itself is flat."""
+    day = quote.get("change_pct") or 0
+    short = tech.get("short_bias") or 0
+    swing = tech.get("swing_bias") or 0
+    news_bias = news.get("bias") or 0
+    score = short * 0.45 + swing * 0.25 + max(-1.0, min(1.0, day / 1.5)) * 0.2 + news_bias * 0.1
+    if abs(score) < 0.08 and abs(day) < 0.35:
+        side = "FLAT"
+    else:
+        side = "SELL" if score < 0 else "BUY"
+    atr = tech.get("atr") or 0.4
+    bid = quote.get("bid")
+    ask = quote.get("ask")
+    entry = sl = tp = None
+    if side == "SELL" and bid:
+        entry, sl, tp = bid, round(bid + 1.5 * atr, 3), round(bid - 2.2 * atr, 3)
+    elif side == "BUY" and ask:
+        entry, sl, tp = ask, round(ask - 1.5 * atr, 3), round(ask + 2.2 * atr, 3)
+    return {
+        "side": side,
+        "score": round(score, 3),
+        "entry": entry,
+        "sl": sl,
+        "tp": tp,
+        "qty": 0.01,
+        "status": "NOT SENT",
+        "why": f"24h {day:+.2f}%. Short {short:+.2f}. Swing {swing:+.2f}. News {news_bias:+.2f}.",
+    }
     if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
         return {"source": "mt5", "label": "ORDER BOOK", "bids": depth.get("bids") or [], "asks": depth.get("asks") or []}
     asks, bids = [], []
@@ -213,6 +241,11 @@ def build(minutes: int = 15) -> Dict:
     bid = live_quote.get("bid")
     ask = live_quote.get("ask")
     last_px = live_quote.get("last") or last
+    ticket = _ticket({
+        "bid": bid,
+        "ask": ask,
+        "change_pct": live_quote.get("change_pct") or 0,
+    }, tech, news)
     depth = snap.get("depth")
     if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
         book = depth
@@ -239,8 +272,8 @@ def build(minutes: int = 15) -> Dict:
         },
         "analysis": {
             "ensemble": forecast["ensemble_bias"],
-            "decision": debate.get("decision"),
-            "reason": debate.get("reason"),
+            "decision": ticket["side"],
+            "reason": ticket["why"],
             "regime": regime["regime"],
             "sentiment": news.get("bias", 0),
             "atr": tech["atr"],
@@ -248,9 +281,12 @@ def build(minutes: int = 15) -> Dict:
             "target_24h": prediction["forecasts"]["24h"]["target"],
         },
         "signals": [
+            {"agent": "Trade", "bias": ticket["score"], "summary": ticket["side"] + " " + ticket["why"]}
+        ] + [
             {"agent": view.get("agent"), "bias": view.get("bias"), "summary": view.get("summary")}
             for view in debate["views"]
         ],
+        "trade": ticket,
         "book": book,
     })
     return base
