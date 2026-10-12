@@ -122,18 +122,18 @@ def _news() -> Dict:
     return _cache["news"] or {"sentiment_bias": 0.0}
 
 
-def build() -> Dict:
+def build(minutes: int = 15) -> Dict:
     live = os.getenv("OPENOIL_LIVE", "0") == "1"
     snap = None
     try:
         from plugins import registry as plugin_registry
         pull = plugin_registry.get_connectors().get("mt5-terminal")
         if pull:
-            snap = pull()
+            snap = pull(minutes=minutes)
     except Exception:
         snap = None
     if not isinstance(snap, dict):
-        snap = snapshot()
+        snap = snapshot("", minutes)
     bars = snap.get("bars") or []
     account = snap.get("account") if isinstance(snap.get("account"), dict) else None
     positions = _positions(snap.get("positions"))
@@ -194,10 +194,33 @@ def build() -> Dict:
         _cache["last_dir"] = direction
 
     last = tech["last"]
+    live_quote = snap.get("quote") if isinstance(snap.get("quote"), dict) else {}
+    bid = live_quote.get("bid")
+    ask = live_quote.get("ask")
+    last_px = live_quote.get("last") or last
+    depth = snap.get("depth")
+    if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
+        book = depth
+    elif bid and ask:
+        book = {
+            "source": "quote",
+            "label": "BID / ASK",
+            "asks": [{"price": ask, "size": ""}],
+            "bids": [{"price": bid, "size": ""}],
+        }
+    else:
+        book = None
     base.update({
         "mode": "mt5",
-        "quote": {"last": last, "bid": round(last - 0.02, 2), "ask": round(last + 0.02, 2),
-                  "change": tech["change"], "change_pct": tech["change_pct"]},
+        "timeframe": int(minutes),
+        "quote": {
+            "last": last_px,
+            "bid": bid if bid is not None else last_px,
+            "ask": ask if ask is not None else last_px,
+            "spread": live_quote.get("spread"),
+            "change": tech["change"],
+            "change_pct": tech["change_pct"],
+        },
         "analysis": {
             "ensemble": forecast["ensemble_bias"],
             "regime": regime["regime"],
@@ -210,6 +233,6 @@ def build() -> Dict:
             {"agent": view.get("agent"), "bias": view.get("bias"), "summary": view.get("summary")}
             for view in debate["views"]
         ],
-        "book": _book(last, snap.get("depth")),
+        "book": book,
     })
     return base
