@@ -41,14 +41,16 @@ class FundamentalAgent(Agent):
 
     def analyze(self, context: Dict) -> Dict:
         eia = context.get("eia", {})
-        bias = eia.get("bias", 0)
-        change = eia.get("wow_change")
+        bias = eia.get("bias", 0) or 0
+        event = eia.get("event") or {}
+        title = event.get("title")
+        summary = f"Next {title}: forecast {event.get('forecast') or 'n/a'} vs previous {event.get('previous') or 'n/a'}." if title else "No crude inventory release on this week's Forex Factory calendar."
         return {
             "agent": self.name,
             "bias": bias,
-            "confidence": 0.7 if change else 0.4,
-            "key_points": [f"WoW change: {change}", f"Stocks: {eia.get('crude_stocks')}"],
-            "summary": f"Inventories {'supportive' if bias > 0 else 'pressuring'} for price."
+            "confidence": 0.65 if title else 0.3,
+            "key_points": [summary],
+            "summary": summary,
         }
 
 class GeopoliticsAgent(Agent):
