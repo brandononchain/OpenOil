@@ -195,20 +195,38 @@ def _missing_tool(raw: Any) -> bool:
     return "tool not found" in blob or "unknown tool" in blob
 
 
-def bars_from_terminal(symbol: str):
-    """Broker candles through the MetaTrader5 terminal API. No datetime-range guess."""
+def _minutes(mt5, minutes: int):
+    table = {
+        1: mt5.TIMEFRAME_M1,
+        5: mt5.TIMEFRAME_M5,
+        15: mt5.TIMEFRAME_M15,
+        60: mt5.TIMEFRAME_H1,
+        240: mt5.TIMEFRAME_H4,
+    }
+    return table.get(int(minutes), mt5.TIMEFRAME_M15)
+
+
+def _terminal():
     try:
         import MetaTrader5 as mt5
     except ImportError:
-        return [], "Run: python -m pip install MetaTrader5"
+        return None, "Run: python -m pip install MetaTrader5"
     if not mt5.initialize():
-        return [], f"MetaTrader5.initialize failed: {mt5.last_error()}"
+        return None, f"MetaTrader5.initialize failed: {mt5.last_error()}"
+    return mt5, None
+
+
+def bars_from_terminal(symbol: str, minutes: int = 15):
+    """Broker candles through the MetaTrader5 terminal API. No datetime-range guess."""
+    mt5, err = _terminal()
+    if err:
+        return [], err
     if mt5.symbol_info(symbol) is None:
         return [], f"{symbol} is not on this terminal: {mt5.last_error()}"
     mt5.symbol_select(symbol, True)
-    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, 300)
+    rates = mt5.copy_rates_from_pos(symbol, _minutes(mt5, minutes), 0, 300)
     if rates is None or len(rates) == 0:
-        return [], f"No M15 bars for {symbol}: {mt5.last_error()}"
+        return [], f"No bars for {symbol} {minutes}m: {mt5.last_error()}"
     bars = []
     for row in rates:
         bars.append({
@@ -219,6 +237,50 @@ def bars_from_terminal(symbol: str):
             "c": float(row["close"]),
         })
     return bars, None
+
+
+def quote_from_terminal(symbol: str = ""):
+    cfg_symbol = symbol or _config()["symbol"]
+    mt5, err = _terminal()
+    if err:
+        return None
+    mt5.symbol_select(cfg_symbol, True)
+    tick = mt5.symbol_info_tick(cfg_symbol)
+    if tick is None or not tick.bid or not tick.ask:
+        return None
+    last = tick.last if tick.last else (tick.bid + tick.ask) / 2
+    return {
+        "symbol": cfg_symbol,
+        "bid": float(tick.bid),
+        "ask": float(tick.ask),
+        "last": float(last),
+        "spread": round(float(tick.ask) - float(tick.bid), 5),
+        "time": int(tick.time),
+    }
+
+
+def depth_from_terminal(symbol: str):
+    mt5, err = _terminal()
+    if err:
+        return None
+    mt5.symbol_select(symbol, True)
+    if not mt5.market_book_add(symbol):
+        return None
+    book = mt5.market_book_get(symbol)
+    if not book:
+        return None
+    asks, bids = [], []
+    for row in book:
+        level = {"price": float(row.price), "size": float(row.volume)}
+        if row.type in (mt5.BOOK_TYPE_SELL, mt5.BOOK_TYPE_SELL_MARKET):
+            asks.append(level)
+        elif row.type in (mt5.BOOK_TYPE_BUY, mt5.BOOK_TYPE_BUY_MARKET):
+            bids.append(level)
+    if not asks and not bids:
+        return None
+    asks.sort(key=lambda item: item["price"])
+    bids.sort(key=lambda item: -item["price"])
+    return {"source": "mt5", "label": "ORDER BOOK", "asks": asks[:12], "bids": bids[:12]}
 
 
 def _tool_names(tools: List[Dict]) -> List[str]:
@@ -347,7 +409,7 @@ def _symbol_names(raw: Any) -> List[str]:
     return names
 
 
-def snapshot(symbol: str = "") -> Dict:
+def snapshot(symbol: str = "", minutes: int = 15) -> Dict:
     """Account and candles from the terminal. No invented prices."""
     cfg = _config()
     symbol = symbol or cfg["symbol"]
@@ -378,7 +440,10 @@ def snapshot(symbol: str = "") -> Dict:
                 parsed = _account_from(acct)
                 out["account"] = parsed
                 out["positions"] = term.call_tool("get_trading_open_positions", {})
-                bars, rate_error = bars_from_terminal(symbol)
+                bars, rate_error = bars_from_terminal(symbol, minutes)
+                out["timeframe"] = int(minutes)
+                out["quote"] = quote_from_terminal(symbol)
+                out["depth"] = depth_from_terminal(symbol)
                 if bars:
                     out["bars"] = bars
                     out["price_source"] = "terminal"
