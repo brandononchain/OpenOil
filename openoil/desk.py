@@ -103,6 +103,9 @@ def _pack_news(news: Dict) -> Dict:
         "sources": news.get("sources") or [],
         "headlines": headlines[:24],
         "alerts": [row for row in alerts if row["tag"] == "ALERT"][:8] or alerts[:6],
+        "calendar": news.get("calendar") or [],
+        "trump_iran_mentions": news.get("trump_iran_mentions") or [],
+        "eia": news.get("eia") or {"bias": 0.0},
         "updated": news.get("updated"),
     }
 
@@ -163,8 +166,12 @@ def build(minutes: int = 15) -> Dict:
     tech = _technical(bars)
     context = {
         "analysis": tech,
-        "eia": {"bias": 0.0},
-        "news": {"sentiment_bias": news.get("bias", 0), "trump_mentions": []},
+        "eia": news.get("eia") or {"bias": 0.0},
+        "calendar": news.get("calendar") or [],
+        "news": {
+            "sentiment_bias": news.get("bias", 0),
+            "trump_mentions": news.get("trump_iran_mentions") or [],
+        },
         "ofi": None,
     }
     debate = coordinator.debate(context)
@@ -217,9 +224,10 @@ def build(minutes: int = 15) -> Dict:
             "last": last_px,
             "bid": bid if bid is not None else last_px,
             "ask": ask if ask is not None else last_px,
+            "digits": live_quote.get("digits") or 2,
             "spread": live_quote.get("spread"),
-            "change": tech["change"],
-            "change_pct": tech["change_pct"],
+            "change": live_quote.get("change"),
+            "change_pct": live_quote.get("change_pct"),
         },
         "analysis": {
             "ensemble": forecast["ensemble_bias"],
