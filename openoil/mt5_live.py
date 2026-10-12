@@ -272,27 +272,58 @@ def quote_from_terminal(symbol: str = ""):
 
 
 def depth_from_terminal(symbol: str):
+    """Real DOM if the broker sends it. Otherwise a book built from the last real ticks."""
     mt5, err = _terminal()
     if err:
         return None
     mt5.symbol_select(symbol, True)
-    if not mt5.market_book_add(symbol):
-        return None
-    book = mt5.market_book_get(symbol)
-    if not book:
-        return None
+    info = mt5.symbol_info(symbol)
+    digits = int(info.digits) if info is not None else 2
+    book = None
+    if mt5.market_book_add(symbol):
+        book = mt5.market_book_get(symbol)
     asks, bids = [], []
-    for row in book:
-        level = {"price": float(row.price), "size": float(row.volume)}
-        if row.type in (mt5.BOOK_TYPE_SELL, mt5.BOOK_TYPE_SELL_MARKET):
-            asks.append(level)
-        elif row.type in (mt5.BOOK_TYPE_BUY, mt5.BOOK_TYPE_BUY_MARKET):
-            bids.append(level)
-    if not asks and not bids:
+    if book:
+        for row in book:
+            level = {"price": round(float(row.price), digits), "size": float(row.volume)}
+            if row.type in (mt5.BOOK_TYPE_SELL, mt5.BOOK_TYPE_SELL_MARKET):
+                asks.append(level)
+            elif row.type in (mt5.BOOK_TYPE_BUY, mt5.BOOK_TYPE_BUY_MARKET):
+                bids.append(level)
+    if asks or bids:
+        asks.sort(key=lambda item: item["price"])
+        bids.sort(key=lambda item: -item["price"])
+        return {"source": "mt5", "label": "ORDER BOOK", "asks": asks[:12], "bids": bids[:12]}
+    start = datetime.now(timezone.utc) - timedelta(minutes=20)
+    ticks = mt5.copy_ticks_from(symbol, start, 1500, mt5.COPY_TICKS_ALL)
+    if ticks is None or len(ticks) == 0:
         return None
-    asks.sort(key=lambda item: item["price"])
+    names = set(getattr(ticks.dtype, "names", None) or [])
+    bid_size: Dict[float, float] = {}
+    ask_size: Dict[float, float] = {}
+    for row in ticks:
+        bid = round(float(row["bid"]), digits)
+        ask = round(float(row["ask"]), digits)
+        last = float(row["last"] or 0) if "last" in names else 0.0
+        size = float(row["volume"] or 0) if "volume" in names else 1.0
+        size = size or 1.0
+        flag = int(row["flags"]) if "flags" in names else 0
+        if flag & 32 or (last and last <= bid):
+            bid_size[bid] = bid_size.get(bid, 0) + size
+        elif flag & 64 or (last and last >= ask):
+            ask_size[ask] = ask_size.get(ask, 0) + size
+        else:
+            bid_size[bid] = bid_size.get(bid, 0) + size * 0.5
+            ask_size[ask] = ask_size.get(ask, 0) + size * 0.5
+    tick = mt5.symbol_info_tick(symbol)
+    mid = float(tick.bid) if tick else 0
+    bids = [{"price": price, "size": round(size, 2)} for price, size in bid_size.items() if not mid or price <= mid + 0.5]
+    asks = [{"price": price, "size": round(size, 2)} for price, size in ask_size.items() if not mid or price >= mid - 0.5]
     bids.sort(key=lambda item: -item["price"])
-    return {"source": "mt5", "label": "ORDER BOOK", "asks": asks[:12], "bids": bids[:12]}
+    asks.sort(key=lambda item: item["price"])
+    if not bids and not asks:
+        return None
+    return {"source": "ticks", "label": "TICK BOOK", "asks": asks[:12], "bids": bids[:12]}
 
 
 def _tool_names(tools: List[Dict]) -> List[str]:
