@@ -91,6 +91,26 @@ def _book(mid: float, depth) -> Dict:
     return {"source": "sim", "label": "SIM BOOK", "asks": list(reversed(asks)), "bids": bids}
 
 
+def _pack_news(news: Dict) -> Dict:
+    headlines = [str(item) for item in (news.get("headlines") or []) if item]
+    hot_words = ("attack", "outage", "hormuz", "sanction", "war", "hurricane", "trump", "iran", "opec", "strike", "shortage", "blockade")
+    alerts = []
+    for title in headlines:
+        hot = any(word in title.lower() for word in hot_words)
+        alerts.append({"title": title, "tag": "ALERT" if hot else "WIRE"})
+    return {
+        "bias": news.get("sentiment_bias", 0),
+        "sources": news.get("sources") or [],
+        "headlines": headlines[:24],
+        "alerts": [row for row in alerts if row["tag"] == "ALERT"][:8] or alerts[:6],
+        "updated": news.get("updated"),
+    }
+
+
+def news_public() -> Dict:
+    return _pack_news(_news())
+
+
 def _news() -> Dict:
     now = time.time()
     if _cache["news"] is None or now - _cache["news_at"] > 60:
@@ -117,6 +137,7 @@ def build() -> Dict:
     bars = snap.get("bars") or []
     account = snap.get("account") if isinstance(snap.get("account"), dict) else None
     positions = _positions(snap.get("positions"))
+    news = _pack_news(_news())
     base = {
         "live_orders": live,
         "symbol": snap.get("symbol"),
@@ -125,6 +146,8 @@ def build() -> Dict:
         "account": account,
         "positions": positions,
         "bars": bars[-120:],
+        "news": news,
+        "headlines": news["headlines"][:6],
         "note": "Orders stay off unless OPENOIL_LIVE=1. Nothing is sent automatically.",
     }
     if not bars:
@@ -138,11 +161,10 @@ def build() -> Dict:
         return base
 
     tech = _technical(bars)
-    news = _news()
     context = {
         "analysis": tech,
         "eia": {"bias": 0.0},
-        "news": {"sentiment_bias": news.get("sentiment_bias", 0), "trump_mentions": news.get("trump_iran_mentions") or []},
+        "news": {"sentiment_bias": news.get("bias", 0), "trump_mentions": []},
         "ofi": None,
     }
     debate = coordinator.debate(context)
@@ -179,7 +201,7 @@ def build() -> Dict:
         "analysis": {
             "ensemble": forecast["ensemble_bias"],
             "regime": regime["regime"],
-            "sentiment": news.get("sentiment_bias", 0),
+            "sentiment": news.get("bias", 0),
             "atr": tech["atr"],
             "target_4h": prediction["forecasts"]["4h"]["target"],
             "target_24h": prediction["forecasts"]["24h"]["target"],
@@ -189,6 +211,5 @@ def build() -> Dict:
             for view in debate["views"]
         ],
         "book": _book(last, snap.get("depth")),
-        "headlines": (news.get("headlines") or [])[:6],
     })
     return base
