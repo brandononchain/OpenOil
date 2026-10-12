@@ -125,7 +125,7 @@ class SentimentAnalyzer:
         }
 
     def fetch_realtime(self) -> Dict:
-        """Oil headlines plus this week's Forex Factory calendar."""
+        """Oil headlines plus the Forex Factory calendar for this week."""
         headlines = []
         sources = []
         feeds = [
