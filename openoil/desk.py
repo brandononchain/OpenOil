@@ -70,9 +70,15 @@ def _technical(bars: List[Dict]) -> Dict:
     look = closes[-20:] if len(closes) >= 20 else closes
     base = look[0] or closes[-1]
     move = (closes[-1] - base) / base if base else 0.0
-    bias = max(-1.0, min(1.0, move * 25))
+    short_base = closes[-8] if len(closes) >= 8 else closes[0]
+    swing_base = closes[-40] if len(closes) >= 40 else closes[0]
+    short = (closes[-1] - short_base) / short_base if short_base else 0.0
+    swing = (closes[-1] - swing_base) / swing_base if swing_base else 0.0
+    bias = max(-1.0, min(1.0, (short * 18) + (swing * 8)))
     return {
         "overall_bias": round(bias, 3),
+        "short_bias": round(max(-1.0, min(1.0, short * 40)), 3),
+        "swing_bias": round(max(-1.0, min(1.0, swing * 12)), 3),
         "strength": round(min(1.0, abs(move) * 30), 3),
         "atr": round(atr, 4),
         "last": closes[-1],
@@ -164,6 +170,7 @@ def build(minutes: int = 15) -> Dict:
         return base
 
     tech = _technical(bars)
+    live_quote = snap.get("quote") if isinstance(snap.get("quote"), dict) else {}
     context = {
         "analysis": tech,
         "eia": news.get("eia") or {"bias": 0.0},
@@ -172,6 +179,8 @@ def build(minutes: int = 15) -> Dict:
             "sentiment_bias": news.get("bias", 0),
             "trump_mentions": news.get("trump_iran_mentions") or [],
         },
+        "change_pct": live_quote.get("change_pct"),
+        "spread": live_quote.get("spread") or 0,
         "ofi": None,
     }
     debate = coordinator.debate(context)
@@ -201,7 +210,6 @@ def build(minutes: int = 15) -> Dict:
         _cache["last_dir"] = direction
 
     last = tech["last"]
-    live_quote = snap.get("quote") if isinstance(snap.get("quote"), dict) else {}
     bid = live_quote.get("bid")
     ask = live_quote.get("ask")
     last_px = live_quote.get("last") or last
@@ -231,6 +239,8 @@ def build(minutes: int = 15) -> Dict:
         },
         "analysis": {
             "ensemble": forecast["ensemble_bias"],
+            "decision": debate.get("decision"),
+            "reason": debate.get("reason"),
             "regime": regime["regime"],
             "sentiment": news.get("bias", 0),
             "atr": tech["atr"],
