@@ -7,7 +7,8 @@ from typing import Dict, List
 from openoil.agents import Coordinator
 from openoil.ensemble import EnsembleForecaster
 from openoil.governance import Governance
-from openoil.mt5_live import snapshot
+from openoil.mind import ask_model, decide
+from openoil.mt5_live import send_market, snapshot
 from openoil.prediction_risk import PricePredictor
 from openoil.risk_engine import RiskEngine
 from openoil.self_improvement import SelfImprovement
@@ -20,7 +21,54 @@ sentiment = SentimentAnalyzer()
 learner = SelfImprovement()
 predictor = PricePredictor()
 
-_cache = {"news": None, "news_at": 0.0, "last_dir": None}
+_cache = {"news": None, "news_at": 0.0, "last_dir": None, "mind": None, "mind_at": 0.0}
+MODE_FILE = "openoil_mode.txt"
+
+
+def trade_mode() -> str:
+    forced = os.getenv("OPENOIL_MODE", "").strip().lower()
+    if forced in ("off", "approval", "auto"):
+        return forced
+    if os.path.exists(MODE_FILE):
+        try:
+            saved = open(MODE_FILE).read().strip().lower()
+            if saved in ("off", "approval", "auto"):
+                return saved
+        except Exception:
+            pass
+    return "approval"
+
+
+def set_trade_mode(mode: str) -> str:
+    mode = (mode or "").strip().lower()
+    if mode not in ("off", "approval", "auto"):
+        return trade_mode()
+    with open(MODE_FILE, "w") as handle:
+        handle.write(mode)
+    governance.audit("mode", {"mode": mode})
+    return mode
+
+
+def approve_trade(req_id: str) -> Dict:
+    item = governance.approve(req_id)
+    if item.get("error"):
+        return item
+    signal = item.get("signal") or {}
+    result = send_market(
+        signal.get("symbol") or os.getenv("MT5_SYMBOL", "USOUSD"),
+        signal.get("action"),
+        signal.get("lots") or 0.01,
+        signal.get("sl") or 0,
+        signal.get("tp") or 0,
+    )
+    item["send"] = result
+    governance.save_pending()
+    governance.audit("approval_sent", {"id": req_id, "result": result})
+    return {"approval": item, "send": result}
+
+
+def reject_trade(req_id: str) -> Dict:
+    return governance.reject(req_id)
 
 
 def _num(value, default=0.0) -> float:
@@ -230,12 +278,6 @@ def build(minutes: int = 15) -> Dict:
             "live_orders": live,
             "sent": False,
         })
-        if live and direction in ("BUY", "SELL"):
-            governance.request_approval(
-                {"action": direction, "symbol": snap.get("symbol"), "lots": 0.01},
-                {"overall_bias": debate["synthesized_bias"], "ensemble": forecast, "regime": regime},
-                reason="OPENOIL_LIVE is on. Queued. Not sent.",
-            )
         _cache["last_dir"] = direction
 
     last = tech["last"]
@@ -247,6 +289,54 @@ def build(minutes: int = 15) -> Dict:
         "ask": ask,
         "change_pct": live_quote.get("change_pct") or 0,
     }, tech, news)
+    depth = snap.get("depth")
+    if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
+        book = depth
+    elif bid and ask:
+        book = {
+            "source": "quote",
+            "label": "BID / ASK",
+            "note": "Terminal returned no printed prices yet.",
+            "asks": [{"price": ask, "size": ""}],
+            "bids": [{"price": bid, "size": ""}],
+        }
+    else:
+        book = None
+    bid_size = sum(_num(level.get("size")) for level in (book or {}).get("bids") or [])
+    ask_size = sum(_num(level.get("size")) for level in (book or {}).get("asks") or [])
+    imbalance = round((bid_size - ask_size) / (bid_size + ask_size), 3) if bid_size + ask_size else 0.0
+    headlines = news.get("headlines") or []
+    facts = {
+        "change_pct": live_quote.get("change_pct") or 0,
+        "short_bias": tech.get("short_bias") or 0,
+        "swing_bias": tech.get("swing_bias") or 0,
+        "imbalance": imbalance,
+        "spread": live_quote.get("spread") or 0,
+        "headline": headlines[0] if headlines else "",
+    }
+    if _cache.get("mind") is None or time.time() - _cache.get("mind_at", 0) > 60:
+        brief = (
+            f"Symbol {snap.get('symbol')}. 24h {facts['change_pct']:+.2f}%. "
+            f"Short {facts['short_bias']:+.2f}. Swing {facts['swing_bias']:+.2f}. "
+            f"Book imbalance {imbalance:+.2f}. Spread {facts['spread']}. "
+            f"Score says {ticket['side']}. Headline: {facts['headline'] or 'none'}."
+        )
+        _cache["mind"] = ask_model(brief)
+        _cache["mind_at"] = time.time()
+    verdict = decide(ticket, facts, learner.records, _cache.get("mind"))
+    if verdict["side"] == "FLAT":
+        ticket["side"] = "FLAT"
+        ticket["status"] = "STOOD DOWN" if verdict.get("stood_down") else "NO TRADE"
+    elif verdict["side"] != ticket["side"]:
+        atr = tech.get("atr") or 0.4
+        if verdict["side"] == "SELL" and bid:
+            ticket.update(side="SELL", entry=bid, sl=round(bid + 1.5 * atr, 3), tp=round(bid - 2.2 * atr, 3), status="NOT SENT")
+        elif verdict["side"] == "BUY" and ask:
+            ticket.update(side="BUY", entry=ask, sl=round(ask - 1.5 * atr, 3), tp=round(ask + 2.2 * atr, 3), status="NOT SENT")
+    ticket["why"] = verdict["thought"]
+    ticket["mind"] = verdict["source"]
+    gate = trade_mode()
+    ticket["gate"] = gate
     learner.settle(last_px or 0)
     if ticket["side"] in ("BUY", "SELL") and ticket["side"] != _cache.get("last_ticket"):
         learner.record_signal(
@@ -255,22 +345,43 @@ def build(minutes: int = 15) -> Dict:
             debate,
         )
         _cache["last_ticket"] = ticket["side"]
+        if gate == "auto":
+            sent = send_market(snap.get("symbol") or "USOUSD", ticket["side"], ticket["qty"], ticket["sl"] or 0, ticket["tp"] or 0)
+            ticket["status"] = "SENT" if sent.get("ok") else ("REJECTED " + str(sent.get("error") or sent.get("comment") or ""))
+            _cache["acted_status"] = ticket["status"]
+            governance.audit("auto_send", {"ticket": ticket, "result": sent})
+        elif gate == "approval":
+            already = [
+                row for row in governance.pending_approvals()
+                if (row.get("signal") or {}).get("action") == ticket["side"]
+            ]
+            if not already:
+                req_id = governance.request_approval(
+                    {
+                        "action": ticket["side"],
+                        "symbol": snap.get("symbol"),
+                        "lots": ticket["qty"],
+                        "entry": ticket["entry"],
+                        "sl": ticket["sl"],
+                        "tp": ticket["tp"],
+                    },
+                    {"overall_bias": debate.get("synthesized_bias"), "ensemble": forecast, "regime": regime},
+                    reason=verdict["thought"][:240],
+                )
+                _cache["request_id"] = req_id
+            ticket["status"] = "NEEDS APPROVAL"
+            ticket["request_id"] = _cache.get("request_id")
+            _cache["acted_status"] = ticket["status"]
+        else:
+            ticket["status"] = "SHOWN"
+            _cache["acted_status"] = "SHOWN"
+    elif ticket["side"] == _cache.get("last_ticket"):
+        ticket["status"] = _cache.get("acted_status", ticket["status"])
+        ticket["request_id"] = _cache.get("request_id")
     learned = learner.suggest_weights()
     if learned.get("suggested_weights"):
         ensemble.update_weights(learned)
     summary = learner.performance_summary()
-    depth = snap.get("depth")
-    if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
-        book = depth
-    elif bid and ask:
-        book = {
-            "source": "quote",
-            "label": "BID / ASK",
-            "asks": [{"price": ask, "size": ""}],
-            "bids": [{"price": bid, "size": ""}],
-        }
-    else:
-        book = None
     base.update({
         "mode": "mt5",
         "timeframe": int(minutes),
@@ -301,6 +412,10 @@ def build(minutes: int = 15) -> Dict:
         ],
         "trade": ticket,
         "learning": summary,
+        "gate": gate,
+        "imbalance": imbalance,
+        "mind": {"source": verdict["source"], "thought": verdict["thought"], "model": bool(_cache.get("mind"))},
+        "pending": governance.pending_approvals(),
         "book": book,
     })
     return base
