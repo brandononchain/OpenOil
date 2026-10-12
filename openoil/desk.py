@@ -10,13 +10,14 @@ from openoil.governance import Governance
 from openoil.mt5_live import snapshot
 from openoil.prediction_risk import PricePredictor
 from openoil.risk_engine import RiskEngine
-from openoil.sentiment import SentimentAnalyzer
+from openoil.self_improvement import SelfImprovement
 
 coordinator = Coordinator()
 ensemble = EnsembleForecaster()
 governance = Governance()
 risk = RiskEngine()
 sentiment = SentimentAnalyzer()
+learner = SelfImprovement()
 predictor = PricePredictor()
 
 _cache = {"news": None, "news_at": 0.0, "last_dir": None}
@@ -246,6 +247,18 @@ def build(minutes: int = 15) -> Dict:
         "ask": ask,
         "change_pct": live_quote.get("change_pct") or 0,
     }, tech, news)
+    learner.settle(last_px or 0)
+    if ticket["side"] in ("BUY", "SELL") and ticket["side"] != _cache.get("last_ticket"):
+        learner.record_signal(
+            {"action": ticket["side"], "entry": ticket["entry"], "sl": ticket["sl"], "tp": ticket["tp"]},
+            tech,
+            debate,
+        )
+        _cache["last_ticket"] = ticket["side"]
+    learned = learner.suggest_weights()
+    if learned.get("suggested_weights"):
+        ensemble.update_weights(learned)
+    summary = learner.performance_summary()
     depth = snap.get("depth")
     if isinstance(depth, dict) and (depth.get("bids") or depth.get("asks")):
         book = depth
@@ -287,6 +300,7 @@ def build(minutes: int = 15) -> Dict:
             for view in debate["views"]
         ],
         "trade": ticket,
+        "learning": summary,
         "book": book,
     })
     return base
