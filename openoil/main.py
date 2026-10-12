@@ -55,6 +55,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .brand { color: #fff; letter-spacing: 2px; font-weight: 700; font-size: 16px; }
   .sym { color: #9cffc4; font-size: 13px; }
   .px { font-size: 20px; color: #3dff9a; }
+  #ticket { font-size: 18px; font-weight: 700; letter-spacing: 1px; }
   .up { color: #3dff9a; } .dn { color: #ff6b6b; }
   .muted { color: #6d8274; font-size: 12px; }
   .spacer { flex: 1; }
@@ -105,13 +106,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <a class="nav" href="/news">NEWS</a>
     <div class="sym">USOIL · WTI</div>
     <div class="px" id="px">91.52</div>
+    <div id="ticket" class="dn">FLAT</div>
     <div id="chg" class="up">+0.34 · +0.37%</div>
     <div class="muted">BRENT <span id="brent">95.10</span></div>
     <div class="muted">SPREAD <span id="spr">3.58</span></div>
     <div class="spacer"></div>
     <div class="muted"><span id="modeLabel">OFFLINE · waiting for MT5</span></div>
     <div class="muted" id="clock"></div>
-    <div class="up">SIM</div>
+    <div class="up" id="liveBadge">SIM</div>
   </header>
   <div class="tape"><a href="/news">ALERTS</a><span id="tape">waiting for headlines</span></div>
 
@@ -313,10 +315,18 @@ function renderAccount(account) {
   document.getElementById('ml').textContent = account.margin_level != null ? Number(account.margin_level).toFixed(0) + '%' : '—';
 }
 
-function renderPositions(rows) {
+function renderPositions(rows, trade) {
   const body = document.getElementById('blotter');
-  if (!rows || !rows.length) {
-    body.innerHTML = '<tr><td colspan="8">No open terminal positions. Paper fills are off.</td></tr>';
+  const open = rows || [];
+  if (!open.length && trade && trade.side && trade.side !== 'FLAT') {
+    const cls = trade.side === 'SELL' ? 'sell' : 'buy';
+    body.innerHTML = '<tr><td>SIGNAL</td><td class="' + cls + '">' + trade.side + '</td><td>' + trade.qty +
+      '</td><td>' + fmt(trade.entry) + '</td><td>' + fmt(trade.sl) + '</td><td>' + fmt(trade.tp) +
+      '</td><td>—</td><td>' + trade.status + ' · ' + trade.why + '</td></tr>';
+    return;
+  }
+  if (!open.length) {
+    body.innerHTML = '<tr><td colspan="8">No open terminal positions. No trade: the tape is flat.</td></tr>';
     return;
   }
   body.innerHTML = rows.map(pos => {
@@ -334,7 +344,7 @@ function apply(data) {
   state = data;
   bars = data.bars || [];
   const q = data.quote;
-  const badge = document.querySelector('header .up');
+  const badge = document.getElementById('liveBadge');
   const mode = document.getElementById('modeLabel');
   if (data.mode === 'mt5' && q) {
     if (badge) badge.textContent = data.price_source === 'terminal' ? 'MT5' : 'MDATA';
@@ -392,7 +402,12 @@ function apply(data) {
   }
   renderAccount(data.account);
   renderBook(data.book);
-  renderPositions(data.positions);
+  renderPositions(data.positions, data.trade);
+  const ticket = document.getElementById('ticket');
+  if (ticket && data.trade) {
+    ticket.textContent = data.trade.side || 'FLAT';
+    ticket.className = data.trade.side === 'SELL' ? 'dn' : data.trade.side === 'BUY' ? 'up' : 'muted';
+  }
   draw();
 }
 
