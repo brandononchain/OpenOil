@@ -245,16 +245,28 @@ def quote_from_terminal(symbol: str = ""):
     if err:
         return None
     mt5.symbol_select(cfg_symbol, True)
+    info = mt5.symbol_info(cfg_symbol)
     tick = mt5.symbol_info_tick(cfg_symbol)
     if tick is None or not tick.bid or not tick.ask:
         return None
-    last = tick.last if tick.last else (tick.bid + tick.ask) / 2
+    digits = int(info.digits) if info is not None else 2
+    bid = float(tick.bid)
+    ask = float(tick.ask)
+    hourly = mt5.copy_rates_from_pos(cfg_symbol, mt5.TIMEFRAME_H1, 0, 26)
+    base = None
+    if hourly is not None and len(hourly) >= 25:
+        base = float(hourly[-25]["close"])
+    change = (bid - base) if base else None
+    change_pct = (change / base * 100) if base else None
     return {
         "symbol": cfg_symbol,
-        "bid": float(tick.bid),
-        "ask": float(tick.ask),
-        "last": float(last),
-        "spread": round(float(tick.ask) - float(tick.bid), 5),
+        "bid": bid,
+        "ask": ask,
+        "last": bid,
+        "digits": digits,
+        "spread": round(ask - bid, digits),
+        "change": None if change is None else round(change, digits),
+        "change_pct": None if change_pct is None else round(change_pct, 2),
         "time": int(tick.time),
     }
 
