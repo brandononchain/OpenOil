@@ -271,6 +271,57 @@ def quote_from_terminal(symbol: str = ""):
     }
 
 
+def send_market(symbol: str, side: str, lots: float = 0.01, sl: float = 0.0, tp: float = 0.0) -> Dict:
+    """Send one market order. The desk only calls this in auto mode or after a human approves."""
+    mt5, err = _terminal()
+    if err:
+        return {"ok": False, "error": err}
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return {"ok": False, "error": f"{symbol} is not on this terminal"}
+    mt5.symbol_select(symbol, True)
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return {"ok": False, "error": "no tick"}
+    if side == "BUY":
+        order_type = mt5.ORDER_TYPE_BUY
+        price = float(tick.ask)
+    elif side == "SELL":
+        order_type = mt5.ORDER_TYPE_SELL
+        price = float(tick.bid)
+    else:
+        return {"ok": False, "error": "side must be BUY or SELL"}
+    filling = mt5.ORDER_FILLING_RETURN
+    if info.filling_mode & mt5.SYMBOL_FILLING_IOC:
+        filling = mt5.ORDER_FILLING_IOC
+    elif info.filling_mode & mt5.SYMBOL_FILLING_FOK:
+        filling = mt5.ORDER_FILLING_FOK
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": float(lots),
+        "type": order_type,
+        "price": price,
+        "sl": float(sl or 0),
+        "tp": float(tp or 0),
+        "deviation": 30,
+        "magic": 260011,
+        "comment": "OpenOil",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": filling,
+    }
+    result = mt5.order_send(request)
+    if result is None:
+        return {"ok": False, "error": str(mt5.last_error())}
+    return {
+        "ok": result.retcode == mt5.TRADE_RETCODE_DONE,
+        "retcode": int(result.retcode),
+        "order": int(result.order),
+        "comment": result.comment,
+        "price": price,
+    }
+
+
 def _ladder(buckets: Dict[float, float], reverse: bool) -> List[Dict]:
     rows = [{"price": price, "size": round(size, 2)} for price, size in buckets.items() if size > 0]
     rows.sort(key=lambda item: item["price"], reverse=reverse)
