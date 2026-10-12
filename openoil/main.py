@@ -148,6 +148,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="row"><span class="k">VAR 95</span><span>$150</span></div>
       </div>
       <div class="sec">
+        <div class="hd">MIND</div>
+        <div id="mind">Reading the tape.</div>
+        <div class="tf" id="gates" style="margin-top:8px">
+          <button type="button" data-mode="off">SHOW</button>
+          <button type="button" data-mode="approval">APPROVE</button>
+          <button type="button" data-mode="auto">AUTO</button>
+        </div>
+      </div>
+      <div class="sec">
         <div class="hd">SIGNALS</div>
 <div id="signals"></div>
       </div>
@@ -316,29 +325,36 @@ function renderAccount(account) {
   document.getElementById('ml').textContent = account.margin_level != null ? Number(account.margin_level).toFixed(0) + '%' : '—';
 }
 
-function renderPositions(rows, trade) {
+function renderPositions(rows, trade, pending) {
   const body = document.getElementById('blotter');
   const open = rows || [];
-  if (!open.length && trade && trade.side && trade.side !== 'FLAT') {
+  let html = '';
+  if (!open.length && trade && trade.entry) {
     const cls = trade.side === 'SELL' ? 'sell' : 'buy';
-    body.innerHTML = '<tr><td>SIGNAL</td><td class="' + cls + '">' + trade.side + '</td><td>' + trade.qty +
+    html = '<tr><td>SIGNAL</td><td class="' + cls + '">' + (trade.side || '') + '</td><td>' + trade.qty +
       '</td><td>' + fmt(trade.entry) + '</td><td>' + fmt(trade.sl) + '</td><td>' + fmt(trade.tp) +
-      '</td><td>—</td><td>' + trade.status + ' · ' + trade.why + '</td></tr>';
-    return;
+      '</td><td>—</td><td>' + (trade.status || '') + '</td></tr>';
+  } else if (!open.length) {
+    html = '<tr><td colspan="8">No trade. The mind is flat.</td></tr>';
+  } else {
+    html = open.map(pos => {
+      const pnl = Number(pos.pnl);
+      const cls = pnl >= 0 ? 'up' : 'dn';
+      const side = String(pos.side).toUpperCase() === 'SELL' ? 'sell' : 'buy';
+      return '<tr><td>#' + (pos.id || '') + '</td><td class="' + side + '">' + (pos.side || '') + '</td><td>' + (pos.qty ?? '') +
+        '</td><td>' + fmt(pos.entry) + '</td><td>' + fmt(pos.sl) + '</td><td>' + fmt(pos.tp) +
+        '</td><td class="' + cls + '">' + (Number.isFinite(pnl) ? ((pnl >= 0 ? '+' : '') + pnl.toFixed(2)) : '—') +
+        '</td><td>' + (pos.status || 'OPEN') + '</td></tr>';
+    }).join('');
   }
-  if (!open.length) {
-    body.innerHTML = '<tr><td colspan="8">No open terminal positions. No trade: the tape is flat.</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.map(pos => {
-    const pnl = Number(pos.pnl);
-    const cls = pnl >= 0 ? 'up' : 'dn';
-    const side = String(pos.side).toUpperCase() === 'SELL' ? 'sell' : 'buy';
-    return '<tr><td>#' + (pos.id || '') + '</td><td class="' + side + '">' + (pos.side || '') + '</td><td>' + (pos.qty ?? '') +
-      '</td><td>' + fmt(pos.entry) + '</td><td>' + fmt(pos.sl) + '</td><td>' + fmt(pos.tp) +
-      '</td><td class="' + cls + '">' + (Number.isFinite(pnl) ? ((pnl >= 0 ? '+' : '') + pnl.toFixed(2)) : '—') +
-      '</td><td>' + (pos.status || 'OPEN') + '</td></tr>';
+  html += (pending || []).map(item => {
+    const sig = item.signal || {};
+    const cls = sig.action === 'SELL' ? 'sell' : 'buy';
+    return '<tr><td>' + item.id + '</td><td class="' + cls + '">' + (sig.action || '') + '</td><td>' + (sig.lots || '') +
+      '</td><td>' + fmt(sig.entry) + '</td><td>' + fmt(sig.sl) + '</td><td>' + fmt(sig.tp) +
+      '</td><td>—</td><td><button type="button" data-act="take" data-id="' + item.id + '">TAKE</button> <button type="button" data-act="skip" data-id="' + item.id + '">SKIP</button></td></tr>';
   }).join('');
+  body.innerHTML = html;
 }
 
 function apply(data) {
@@ -349,7 +365,7 @@ function apply(data) {
   const mode = document.getElementById('modeLabel');
   if (data.mode === 'mt5' && q) {
     if (badge) badge.textContent = data.price_source === 'terminal' ? 'MT5' : 'MDATA';
-    if (mode) mode.textContent = (data.live_orders ? 'LIVE ARMED' : 'READ ONLY') + ' · ' + (data.price_source || 'mt5');
+    if (mode) mode.textContent = (data.gate || 'approval').toUpperCase() + ' · ' + (data.price_source || 'mt5');
     document.getElementById('px').textContent = fmt(q.last);
     const chg = document.getElementById('chg');
     chg.textContent = q.change == null
@@ -404,9 +420,16 @@ function apply(data) {
     ).join('');
     rail.innerHTML = (rows.slice(0, 4).map(row => '<div class="news-item"><span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title + '</div>').join('') || '') + upcoming || '<div class="news-item">no oil headlines</div>';
   }
+  const mind = data.mind || {};
+  const mindEl = document.getElementById('mind');
+  if (mindEl) {
+    const tag = mind.source === 'grok' ? 'GROK' : mind.source === 'memory' ? 'MEMORY' : 'TAPE';
+    mindEl.textContent = tag + ' · ' + (mind.thought || 'Reading the tape.');
+  }
+  document.querySelectorAll('#gates button').forEach(button => button.classList.toggle('on', button.dataset.mode === (data.gate || 'approval')));
   renderAccount(data.account);
   renderBook(data.book);
-  renderPositions(data.positions, data.trade);
+  renderPositions(data.positions, data.trade, data.pending);
   const ticket = document.getElementById('ticket');
   if (ticket && data.trade) {
     ticket.textContent = data.trade.side || 'FLAT';
@@ -447,6 +470,20 @@ document.getElementById('tfs').addEventListener('click', (event) => {
   if (!button) return;
   tf = button.dataset.tf;
   document.querySelectorAll('#tfs button').forEach((item) => item.classList.toggle('on', item === button));
+  pull();
+});
+document.getElementById('gates').addEventListener('click', async (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  if (button.dataset.mode === 'auto' && !confirm('AUTO sends real 0.01 market orders on this account with no approval.')) return;
+  await fetch('/api/mode?mode=' + button.dataset.mode, { method: 'POST' });
+  pull();
+});
+document.getElementById('blotter').addEventListener('click', async (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  const path = button.dataset.act === 'take' ? '/api/approve/' : '/api/reject/';
+  await fetch(path + button.dataset.id, { method: 'POST' });
   pull();
 });
 
@@ -534,6 +571,21 @@ def api_news():
 @app.get("/api/state")
 def api_state(tf: int = 15):
     return build_desk(tf)
+
+@app.post("/api/mode")
+def api_mode(mode: str):
+    from openoil.desk import set_trade_mode
+    return {"mode": set_trade_mode(mode)}
+
+@app.post("/api/approve/{req_id}")
+def api_approve(req_id: str):
+    from openoil.desk import approve_trade
+    return approve_trade(req_id)
+
+@app.post("/api/reject/{req_id}")
+def api_reject(req_id: str):
+    from openoil.desk import reject_trade
+    return reject_trade(req_id)
 
 @app.get("/api/quote")
 def api_quote():
