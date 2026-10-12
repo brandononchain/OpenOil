@@ -137,6 +137,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="sec">
         <div class="hd">ANALYSIS</div>
         <div class="row"><span class="k">ENSEMBLE</span><span id="ens">—</span></div>
+        <div class="row"><span class="k">READ</span><span id="read">—</span></div>
         <div class="row"><span class="k">REGIME</span><span id="regime">—</span></div>
         <div class="row"><span class="k">SENTIMENT</span><span id="sent">—</span></div>
         <div class="row"><span class="k">4H</span><span id="t4">—</span></div>
@@ -296,7 +297,7 @@ function renderBook(book) {
   const bestBid = (book.bids && book.bids[0] && (book.bids[0].price || book.bids[0].p)) || null;
   const bestAsk = asks.length ? (asks[asks.length - 1].price || asks[asks.length - 1].p) : null;
   document.getElementById('midline').textContent = bestBid && bestAsk
-    ? (fmt(bestBid) + '  /  ' + fmt(bestAsk) + '   ·   ' + (book.source === 'mt5' ? 'depth' : 'market watch'))
+    ? (fmt(bestBid) + '  /  ' + fmt(bestAsk) + '   ·   ' + (book.source === 'mt5' ? 'depth' : book.source === 'ticks' ? 'tick flow' : 'market watch'))
     : 'no depth from terminal';
 }
 
@@ -368,12 +369,15 @@ function apply(data) {
   }
   const a = data.analysis || {};
   document.getElementById('ens').textContent = a.ensemble == null ? '—' : (a.ensemble >= 0 ? '+' : '') + Number(a.ensemble).toFixed(2);
+  const read = document.getElementById('read');
+  if (read) read.textContent = a.decision ? String(a.decision).toUpperCase() : '—';
   document.getElementById('regime').textContent = a.regime || '—';
   document.getElementById('sent').textContent = a.sentiment == null ? '—' : (a.sentiment >= 0 ? '+' : '') + Number(a.sentiment).toFixed(2);
   document.getElementById('t4').textContent = a.target_4h == null ? '—' : fmt(a.target_4h);
   document.getElementById('t24').textContent = a.target_24h == null ? '—' : fmt(a.target_24h);
   document.getElementById('signals').innerHTML = (data.signals || []).map(s =>
-    '<div class="sig"><span>' + s.agent + '</span><span>' + (Number(s.bias) >= 0 ? '+' : '') + Number(s.bias || 0).toFixed(2) + '</span></div>'
+    '<div class="sig"><span>' + s.agent + '</span><span>' + (Number(s.bias) >= 0 ? '+' : '') + Number(s.bias || 0).toFixed(2) + '</span></div>' +
+    '<div class="muted" style="margin:0 0 8px">' + (s.summary || '') + '</div>'
   ).join('') || '<div class="sig"><span>NO SIGNAL</span><span>—</span></div>';
   const news = data.news || {};
   const rows = news.alerts && news.alerts.length ? news.alerts : (news.headlines || []).map(title => ({ title: title, tag: 'WIRE' }));
