@@ -75,7 +75,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .tf button.on { color: #3dff9a; border-color: #3dff9a; }
   #chart { flex: 1; width: 100%; min-height: 0; display: block; }
   .ob { font-size: 12px; }
-  .ob-row { display: grid; grid-template-columns: 1fr 72px 72px; padding: 1px 10px; position: relative; height: 18px; align-items: center; }
+  .ob-row { display: grid; grid-template-columns: 1fr 64px; padding: 1px 10px; position: relative; height: 20px; align-items: center; }
+  .ob-row span:last-child { text-align: right; }
   .ob-bar { position: absolute; top: 1px; bottom: 1px; right: 0; opacity: .22; }
   .ask { color: #ff8a8a; } .ask .ob-bar { background: #ff5d5d; }
   .bid { color: #3dff9a; } .bid .ob-bar { background: #3dff9a; }
@@ -196,7 +197,8 @@ function money(n) {
 }
 function fmt(n) {
   const v = Number(n);
-  return Number.isFinite(v) ? v.toFixed(2) : '—';
+  const digits = (state && state.quote && state.quote.digits) || 2;
+  return Number.isFinite(v) ? v.toFixed(digits) : '—';
 }
 
 function resize() {
@@ -284,17 +286,18 @@ function renderBook(book) {
     return levels.map(lv => {
       const px = Number(lv.price || lv.p);
       const sz = Number(lv.size || lv.volume || 0);
-      const w = Math.round((sz / max) * 100);
-      return '<div class="ob-row ' + side + '"><span>' + fmt(px) + '</span><span>' + sz + '</span><span></span><div class="ob-bar" style="width:' + w + '%"></div></div>';
+      const w = sz ? Math.round((sz / max) * 100) : 0;
+      return '<div class="ob-row ' + side + '"><span>' + fmt(px) + '</span><span>' + (sz ? sz : '') + '</span><div class="ob-bar" style="width:' + w + '%"></div></div>';
     }).join('');
   };
-  document.getElementById('asks').innerHTML = rows('ask', book.asks || []);
+  const asks = (book.asks || []).slice().reverse();
+  document.getElementById('asks').innerHTML = rows('ask', asks);
   document.getElementById('bids').innerHTML = rows('bid', book.bids || []);
-  const bid = (book.bids && book.bids[0] && (book.bids[0].price || book.bids[0].p)) || null;
-  const ask = (book.asks && book.asks.length && (book.asks[book.asks.length - 1].price || book.asks[book.asks.length - 1].p)) || null;
-  document.getElementById('midline').textContent = (book.source === 'sim' ? 'SIM · ' : '') + (bid && ask ? ('spread ' + (ask - bid).toFixed(2)) : 'no depth from terminal');
-  if (bid) document.getElementById('qbid').textContent = fmt(bid);
-  if (ask) document.getElementById('qask').textContent = fmt(ask);
+  const bestBid = (book.bids && book.bids[0] && (book.bids[0].price || book.bids[0].p)) || null;
+  const bestAsk = asks.length ? (asks[asks.length - 1].price || asks[asks.length - 1].p) : null;
+  document.getElementById('midline').textContent = bestBid && bestAsk
+    ? (fmt(bestBid) + '  /  ' + fmt(bestAsk) + '   ·   ' + (book.source === 'mt5' ? 'depth' : 'market watch'))
+    : 'no depth from terminal';
 }
 
 function renderAccount(account) {
@@ -337,7 +340,9 @@ function apply(data) {
     if (mode) mode.textContent = (data.live_orders ? 'LIVE ARMED' : 'READ ONLY') + ' · ' + (data.price_source || 'mt5');
     document.getElementById('px').textContent = fmt(q.last);
     const chg = document.getElementById('chg');
-    chg.textContent = (q.change >= 0 ? '+' : '') + fmt(q.change) + '  ·  ' + (q.change_pct >= 0 ? '+' : '') + Number(q.change_pct).toFixed(2) + '%';
+    chg.textContent = q.change == null
+      ? '24h —'
+      : ('24h  ' + (q.change >= 0 ? '+' : '') + fmt(q.change) + '  ·  ' + (Number(q.change_pct) >= 0 ? '+' : '') + Number(q.change_pct).toFixed(2) + '%');
     chg.className = q.change >= 0 ? 'up' : 'dn';
     document.getElementById('qbid').textContent = fmt(q.bid);
     document.getElementById('qask').textContent = fmt(q.ask);
@@ -375,7 +380,12 @@ function apply(data) {
   const tape = document.getElementById('tape');
   if (tape) tape.innerHTML = rows.slice(0, 6).map(row => '<span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title).join(' &nbsp;·&nbsp; ') || 'no headlines';
   const rail = document.getElementById('newsrail');
-  if (rail) rail.innerHTML = rows.slice(0, 4).map(row => '<div class="news-item"><span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title + '</div>').join('') || '<div class="news-item">no headlines</div>';
+  if (rail) {
+    const upcoming = (news.calendar || []).filter(item => item.oil).slice(0, 2).map(item =>
+      '<div class="news-item"><span class="wire">FF</span> ' + item.title + ' · ' + (item.impact || '') + ' · ' + (item.forecast || 'n/a') + '</div>'
+    ).join('');
+    rail.innerHTML = (rows.slice(0, 4).map(row => '<div class="news-item"><span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title + '</div>').join('') || '') + upcoming || '<div class="news-item">no oil headlines</div>';
+  }
   renderAccount(data.account);
   renderBook(data.book);
   renderPositions(data.positions);
@@ -397,8 +407,16 @@ async function pullQuote() {
     if (!q || q.bid == null) return;
     document.getElementById('qbid').textContent = fmt(q.bid);
     document.getElementById('qask').textContent = fmt(q.ask);
-    document.getElementById('px').textContent = fmt(q.last || ((Number(q.bid) + Number(q.ask)) / 2));
-    if (q.spread != null) document.getElementById('spr').textContent = Number(q.spread).toFixed(2);
+    document.getElementById('px').textContent = fmt(q.last || q.bid);
+    if (q.spread != null) document.getElementById('spr').textContent = Number(q.spread).toFixed((state && state.quote && state.quote.digits) || 2);
+    if (bars.length && q.bid != null) {
+      const last = bars[bars.length - 1];
+      const px = Number(q.bid);
+      last.c = px;
+      last.h = Math.max(Number(last.h), px);
+      last.l = Math.min(Number(last.l), px);
+      draw();
+    }
   } catch (err) {}
 }
 document.getElementById('tfs').addEventListener('click', (event) => {
@@ -465,7 +483,14 @@ async function load() {
   document.getElementById('list').innerHTML = rows.map(title => {
     const tag = hot.has(title) ? 'ALERT' : 'WIRE';
     return '<div class="item"><div class="' + (tag === 'ALERT' ? 'alert' : 'wire') + '">' + tag + '</div>' + title + '</div>';
-  }).join('') || '<div class="item">No headlines yet.</div>';
+  }).join('') || '<div class="item">No oil headlines yet.</div>';
+  const cal = data.calendar || [];
+  if (cal.length) {
+    document.getElementById('list').innerHTML += '<div class="item"><div class="wire">FOREX FACTORY</div></div>' + cal.map(item =>
+      '<div class="item"><div class="wire">' + (item.country || '') + ' · ' + (item.impact || '') + '</div>' +
+      item.title + ' · forecast ' + (item.forecast || 'n/a') + ' · previous ' + (item.previous || 'n/a') + '</div>'
+    ).join('');
+  }
 }
 load();
 setInterval(load, 20000);
