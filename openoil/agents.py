@@ -25,14 +25,18 @@ class TechnicalAgent(Agent):
 
     def analyze(self, context: Dict) -> Dict:
         analysis = context.get("analysis", {})
-        scores = analysis.get("timeframe_scores", {})
-        overall = analysis.get("overall_bias", 0)
+        short = analysis.get("short_bias", 0) or 0
+        swing = analysis.get("swing_bias", analysis.get("overall_bias", 0)) or 0
+        day = context.get("change_pct")
+        bias = max(-1.0, min(1.0, short * 0.65 + swing * 0.35))
+        day_txt = "no 24h read" if day is None else f"24h {day:+.2f}%"
+        side = "up" if bias > 0.12 else "down" if bias < -0.12 else "flat"
         return {
             "agent": self.name,
-            "bias": overall,
-            "confidence": min(0.9, abs(overall) * 1.2),
-            "key_points": [f"{tf}: {s.get('score', 0):.2f}" for tf, s in list(scores.items())[:4]],
-            "summary": f"Technical confluence is {'bullish' if overall > 0.2 else 'bearish' if overall < -0.2 else 'neutral'} across timeframes."
+            "bias": round(bias, 3),
+            "confidence": min(0.9, 0.35 + abs(bias)),
+            "key_points": [day_txt, f"short {short:+.2f}", f"swing {swing:+.2f}"],
+            "summary": f"Price is {side}. {day_txt}. Short-term {short:+.2f}, swing {swing:+.2f}.",
         }
 
 class FundamentalAgent(Agent):
@@ -59,14 +63,20 @@ class GeopoliticsAgent(Agent):
 
     def analyze(self, context: Dict) -> Dict:
         news = context.get("news", {})
-        sentiment = news.get("sentiment_bias", 0)
-        mentions = news.get("trump_mentions", [])[:3]
+        sentiment = news.get("sentiment_bias", 0) or 0
+        mentions = news.get("trump_mentions", [])[:2]
+        if mentions:
+            summary = "Headline risk: " + mentions[0][:110]
+        elif abs(sentiment) < 0.05:
+            summary = "No oil headline is pushing price right now."
+        else:
+            summary = f"Oil headlines lean {'higher' if sentiment > 0 else 'lower'} ({sentiment:+.2f})."
         return {
             "agent": self.name,
-            "bias": sentiment,
-            "confidence": min(0.85, abs(sentiment) * 2 + 0.3),
+            "bias": round(sentiment, 3),
+            "confidence": min(0.8, 0.3 + abs(sentiment)),
             "key_points": mentions,
-            "summary": f"Geopolitical risk premium is {'elevated' if sentiment > 0.15 else 'easing' if sentiment < -0.15 else 'stable'}."
+            "summary": summary,
         }
 
 class RiskAgent(Agent):
@@ -75,13 +85,22 @@ class RiskAgent(Agent):
 
     def analyze(self, context: Dict) -> Dict:
         analysis = context.get("analysis", {})
-        atr = analysis.get("atr", 1.5)
+        atr = analysis.get("atr") or 0
+        spread = context.get("spread") or 0
+        wide = spread > max((atr or 0) * 0.2, 0.08)
+        bias = -0.25 if wide else 0.0
+        stop = round((atr or 0.3) * 1.5, 3)
+        summary = (
+            f"Spread {spread} is wide against ATR {atr}. Stand aside."
+            if wide else
+            f"Spread {spread} is tradable. Stop about {stop} away."
+        )
         return {
             "agent": self.name,
-            "bias": 0.0,
-            "confidence": 0.6,
-            "key_points": [f"ATR ~ {atr}", "Max positions enforced"],
-            "summary": "Risk parameters within bounds; ATR-based stops recommended."
+            "bias": bias,
+            "confidence": 0.7,
+            "key_points": [summary],
+            "summary": summary,
         }
 
 class Coordinator:
@@ -111,10 +130,14 @@ class Coordinator:
             w = weights.get(v.get("agent"), plugin_weight)
             weighted_bias += v.get("bias", 0) * w
         avg_conf = sum(v.get("confidence", 0.5) for v in views) / max(1, len(views))
+        reasons = [v.get("summary") for v in views if v.get("summary")]
+        direction = "buy" if weighted_bias > 0.15 else "sell" if weighted_bias < -0.15 else "wait"
         return {
             "views": views,
             "synthesized_bias": round(max(-1, min(1, weighted_bias)), 3),
             "avg_confidence": round(avg_conf, 2),
             "consensus": "strong" if abs(weighted_bias) > 0.4 else "moderate" if abs(weighted_bias) > 0.15 else "weak",
+            "decision": direction,
+            "reason": " ".join(reasons[:3]),
             "plugin_agents_used": list(self.plugin_agents.keys())
         }
