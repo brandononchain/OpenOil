@@ -59,7 +59,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .muted { color: #6d8274; font-size: 12px; }
   .spacer { flex: 1; }
   .mid { display: grid; grid-template-columns: 270px minmax(0, 1fr) 300px; min-height: 0; }
-  .rail { min-height: 0; overflow: auto; background: #090d0b; border-right: 1px solid #1c3a28; }
+  .rail { min-height: 0; overflow: auto; background: #090d0b; border-right: 1px solid #1c3a28; scrollbar-width: thin; scrollbar-color: #244832 transparent; }
+  .rail::-webkit-scrollbar, .tbl::-webkit-scrollbar { width: 8px; height: 8px; }
+  .rail::-webkit-scrollbar-track, .tbl::-webkit-scrollbar-track { background: #090d0b; }
+  .rail::-webkit-scrollbar-thumb, .tbl::-webkit-scrollbar-thumb { background: #1c3a28; border: 2px solid #090d0b; border-radius: 8px; }
   .rail.right { border-right: none; border-left: 1px solid #1c3a28; }
   .sec { padding: 10px 12px 12px; border-bottom: 1px solid #163024; }
   .hd { color: #7d9; font-size: 11px; letter-spacing: 1px; margin-bottom: 6px; }
@@ -128,7 +131,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="row"><span class="k">ASK</span><span class="ask" id="qask">91.54</span></div>
         <div class="row"><span class="k">HIGH</span><span id="hi">92.40</span></div>
         <div class="row"><span class="k">LOW</span><span id="lo">89.43</span></div>
-        <div class="row"><span class="k">CVD</span><span class="up" id="cvd">+1,240</span></div>
+        <div class="row"><span class="k">CVD</span><span id="cvd">—</span></div>
       </div>
       <div class="sec">
         <div class="hd">ANALYSIS</div>
@@ -151,7 +154,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     <section class="chart-wrap">
       <div class="chart-head">
-        <span>USOIL · CANDLES</span>
+        <span id="chartTitle">USOUSD · 15m</span>
         <span class="tf" id="tfs">
           <button data-tf="1">1m</button><button data-tf="5">5m</button><button data-tf="15" class="on">15m</button><button data-tf="60">1h</button><button data-tf="240">4h</button>
         </span>
@@ -336,7 +339,14 @@ function apply(data) {
     const chg = document.getElementById('chg');
     chg.textContent = (q.change >= 0 ? '+' : '') + fmt(q.change) + '  ·  ' + (q.change_pct >= 0 ? '+' : '') + Number(q.change_pct).toFixed(2) + '%';
     chg.className = q.change >= 0 ? 'up' : 'dn';
-    document.getElementById('brent').textContent = fmt(q.last + 3.5);
+    document.getElementById('qbid').textContent = fmt(q.bid);
+    document.getElementById('qask').textContent = fmt(q.ask);
+    if (q.spread != null) document.getElementById('spr').textContent = Number(q.spread).toFixed(2);
+    const title = document.getElementById('chartTitle');
+    if (title) {
+      const minutes = Number(data.timeframe || 15);
+      title.textContent = (data.symbol || 'USOUSD') + ' · ' + (minutes >= 60 ? (minutes / 60) + 'h' : minutes + 'm');
+    }
     const hi = Math.max(...bars.map(b => b.h));
     const lo = Math.min(...bars.map(b => b.l));
     document.getElementById('hi').textContent = fmt(hi);
@@ -372,21 +382,39 @@ function apply(data) {
   draw();
 }
 
+let tf = 15;
 async function pull() {
   try {
-    const res = await fetch('/api/state');
+    const res = await fetch('/api/state?tf=' + tf);
     apply(await res.json());
   } catch (err) {
     apply({ mode: 'offline', error: 'Desk request failed', bars: [], positions: [] });
   }
 }
+async function pullQuote() {
+  try {
+    const q = await (await fetch('/api/quote')).json();
+    if (!q || q.bid == null) return;
+    document.getElementById('qbid').textContent = fmt(q.bid);
+    document.getElementById('qask').textContent = fmt(q.ask);
+    document.getElementById('px').textContent = fmt(q.last || ((Number(q.bid) + Number(q.ask)) / 2));
+    if (q.spread != null) document.getElementById('spr').textContent = Number(q.spread).toFixed(2);
+  } catch (err) {}
+}
+document.getElementById('tfs').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  tf = button.dataset.tf;
+  document.querySelectorAll('#tfs button').forEach((item) => item.classList.toggle('on', item === button));
+  pull();
+});
 
 function clock() {
   document.getElementById('clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 window.addEventListener('resize', resize);
 clock(); setInterval(clock, 1000);
-pull(); setInterval(pull, 4000);
+pull(); setInterval(pull, 4000); setInterval(pullQuote, 1000);
 resize();
 </script>
 </body>
@@ -456,8 +484,13 @@ def api_news():
     return news_public()
 
 @app.get("/api/state")
-def api_state():
-    return build_desk()
+def api_state(tf: int = 15):
+    return build_desk(tf)
+
+@app.get("/api/quote")
+def api_quote():
+    from openoil.mt5_live import quote_from_terminal
+    return quote_from_terminal() or {}
 
 @app.get("/mt5/snapshot")
 def mt5_state():
