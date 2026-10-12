@@ -140,6 +140,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="hd">ANALYSIS</div>
         <div class="row"><span class="k">ENSEMBLE</span><span id="ens">—</span></div>
         <div class="row"><span class="k">READ</span><span id="read">—</span></div>
+        <div class="row"><span class="k">LEARN</span><span id="learn">—</span></div>
         <div class="row"><span class="k">REGIME</span><span id="regime">—</span></div>
         <div class="row"><span class="k">SENTIMENT</span><span id="sent">—</span></div>
         <div class="row"><span class="k">4H</span><span id="t4">—</span></div>
@@ -299,8 +300,8 @@ function renderBook(book) {
   const bestBid = (book.bids && book.bids[0] && (book.bids[0].price || book.bids[0].p)) || null;
   const bestAsk = asks.length ? (asks[asks.length - 1].price || asks[asks.length - 1].p) : null;
   document.getElementById('midline').textContent = bestBid && bestAsk
-    ? (fmt(bestBid) + '  /  ' + fmt(bestAsk) + '   ·   ' + (book.source === 'mt5' ? 'depth' : book.source === 'ticks' ? 'tick flow' : 'market watch'))
-    : 'no depth from terminal';
+    ? (fmt(bestBid) + '  /  ' + fmt(bestAsk) + '   ·   ' + (book.note || book.label || ''))
+    : (book.note || 'no depth from terminal');
 }
 
 function renderAccount(account) {
@@ -381,6 +382,9 @@ function apply(data) {
   document.getElementById('ens').textContent = a.ensemble == null ? '—' : (a.ensemble >= 0 ? '+' : '') + Number(a.ensemble).toFixed(2);
   const read = document.getElementById('read');
   if (read) read.textContent = a.decision ? String(a.decision).toUpperCase() : '—';
+  const learn = document.getElementById('learn');
+  const got = data.learning || {};
+  if (learn) learn.textContent = (got.trades || 0) + ' scored · ' + Math.round((got.win_rate || 0) * 100) + '%';
   document.getElementById('regime').textContent = a.regime || '—';
   document.getElementById('sent').textContent = a.sentiment == null ? '—' : (a.sentiment >= 0 ? '+' : '') + Number(a.sentiment).toFixed(2);
   document.getElementById('t4').textContent = a.target_4h == null ? '—' : fmt(a.target_4h);
