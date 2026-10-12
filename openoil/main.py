@@ -50,7 +50,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <style>
   html, body { height: 100%; margin: 0; background: #070907; color: #d7ffe4; font-family: ui-monospace, "Cascadia Mono", "Courier New", monospace; }
   * { box-sizing: border-box; }
-  .term { height: 100vh; display: grid; grid-template-rows: 48px minmax(0, 1fr) 176px; }
+  .term { height: 100vh; display: grid; grid-template-rows: 48px 28px minmax(0, 1fr) 176px; }
   .top { display: flex; align-items: center; gap: 22px; padding: 0 14px; border-bottom: 1px solid #1c3a28; background: #0b100d; }
   .brand { color: #fff; letter-spacing: 2px; font-weight: 700; font-size: 16px; }
   .sym { color: #9cffc4; font-size: 13px; }
@@ -85,12 +85,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   th { text-align: left; color: #6d8274; font-weight: 500; padding: 4px 10px; position: sticky; top: 0; background: #090d0b; }
   td { padding: 5px 10px; border-top: 1px solid #12261c; }
   .buy { color: #3dff9a; } .sell { color: #ff8a8a; }
+  .tape { display: flex; align-items: center; gap: 14px; padding: 0 12px; border-bottom: 1px solid #1c3a28; background: #0b100d; overflow: hidden; white-space: nowrap; font-size: 12px; }
+  .tape a { color: #3dff9a; text-decoration: none; letter-spacing: 1px; }
+  .alert { color: #ffb4b4; }
+  .wire { color: #9cffc4; }
+  .news-item { padding: 8px 0; border-bottom: 1px solid #12261c; font-size: 12px; line-height: 1.4; }
+  a.nav { color: #9cffc4; text-decoration: none; }
 </style>
 </head>
 <body>
 <div class="term">
   <header class="top">
     <div class="brand">OPENOIL</div>
+    <a class="nav" href="/">DESK</a>
+    <a class="nav" href="/news">NEWS</a>
     <div class="sym">USOIL · WTI</div>
     <div class="px" id="px">91.52</div>
     <div id="chg" class="up">+0.34 · +0.37%</div>
@@ -101,6 +109,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="muted" id="clock"></div>
     <div class="up">SIM</div>
   </header>
+  <div class="tape"><a href="/news">ALERTS</a><span id="tape">waiting for headlines</span></div>
 
   <div class="mid">
     <aside class="rail">
@@ -133,6 +142,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="sec">
         <div class="hd">SIGNALS</div>
 <div id="signals"></div>
+      </div>
+      <div class="sec">
+        <div class="hd">NEWS <a class="nav" href="/news">ALL</a></div>
+        <div id="newsrail"></div>
       </div>
     </aside>
 
@@ -347,6 +360,12 @@ function apply(data) {
   document.getElementById('signals').innerHTML = (data.signals || []).map(s =>
     '<div class="sig"><span>' + s.agent + '</span><span>' + (Number(s.bias) >= 0 ? '+' : '') + Number(s.bias || 0).toFixed(2) + '</span></div>'
   ).join('') || '<div class="sig"><span>NO SIGNAL</span><span>—</span></div>';
+  const news = data.news || {};
+  const rows = news.alerts && news.alerts.length ? news.alerts : (news.headlines || []).map(title => ({ title: title, tag: 'WIRE' }));
+  const tape = document.getElementById('tape');
+  if (tape) tape.innerHTML = rows.slice(0, 6).map(row => '<span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title).join(' &nbsp;·&nbsp; ') || 'no headlines';
+  const rail = document.getElementById('newsrail');
+  if (rail) rail.innerHTML = rows.slice(0, 4).map(row => '<div class="news-item"><span class="' + (row.tag === 'ALERT' ? 'alert' : 'wire') + '">' + row.tag + '</span> ' + row.title + '</div>').join('') || '<div class="news-item">no headlines</div>';
   renderAccount(data.account);
   renderBook(data.book);
   renderPositions(data.positions);
@@ -381,6 +400,60 @@ def root():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     return DASHBOARD_HTML
+
+NEWS_HTML = r"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OpenOil News</title>
+<style>
+  body { margin: 0; background: #070907; color: #d7ffe4; font-family: ui-monospace, "Cascadia Mono", "Courier New", monospace; }
+  header { display: flex; gap: 18px; align-items: center; padding: 14px 18px; border-bottom: 1px solid #1c3a28; }
+  a { color: #3dff9a; text-decoration: none; }
+  main { max-width: 860px; padding: 18px; }
+  .meta { color: #6d8274; font-size: 12px; margin-bottom: 14px; }
+  .item { padding: 12px 0; border-bottom: 1px solid #163024; }
+  .alert { color: #ffb4b4; } .wire { color: #9cffc4; }
+  h1 { font-size: 16px; letter-spacing: 2px; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OPENOIL</h1>
+  <a href="/">DESK</a>
+  <a href="/news">NEWS</a>
+</header>
+<main>
+  <div class="meta" id="meta">loading</div>
+  <div id="list"></div>
+</main>
+<script>
+async function load() {
+  const data = await (await fetch('/api/news')).json();
+  document.getElementById('meta').textContent =
+    'bias ' + Number(data.bias || 0).toFixed(2) + '  ·  ' + ((data.sources || []).join(', ') || 'no source yet');
+  const rows = data.headlines || [];
+  const hot = new Set((data.alerts || []).filter(a => a.tag === 'ALERT').map(a => a.title));
+  document.getElementById('list').innerHTML = rows.map(title => {
+    const tag = hot.has(title) ? 'ALERT' : 'WIRE';
+    return '<div class="item"><div class="' + (tag === 'ALERT' ? 'alert' : 'wire') + '">' + tag + '</div>' + title + '</div>';
+  }).join('') || '<div class="item">No headlines yet.</div>';
+}
+load();
+setInterval(load, 20000);
+</script>
+</body>
+</html>
+"""
+
+@app.get("/news", response_class=HTMLResponse)
+def news_page():
+    return NEWS_HTML
+
+@app.get("/api/news")
+def api_news():
+    from openoil.desk import news_public
+    return news_public()
 
 @app.get("/api/state")
 def api_state():
