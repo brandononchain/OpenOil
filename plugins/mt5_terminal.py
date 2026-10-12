@@ -5,9 +5,9 @@ Candles come from the MetaTrader5 terminal API, because get_chart_history
 rejects every datetime format we can see with 'invalid datetime range'.
 """
 
-def pull(symbol: str = ""):
+def pull(symbol: str = "", minutes: int = 15):
     from openoil.mt5_live import snapshot
-    return snapshot(symbol)
+    return snapshot(symbol, minutes)
 
 
 def register_connector():
