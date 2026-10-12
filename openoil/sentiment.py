@@ -26,7 +26,10 @@ UA = {"User-Agent": "OpenOil/1.0 (research; oil desk)"}
 
 def _clean(title: str) -> str:
     text = re.sub(r"<[^>]+>", "", title or "")
-    return text.replace("&", "&").replace("&#39;", "'").replace(""", '"').strip()
+    amp = "&" + "amp;"
+    quot = "&" + "quot;"
+    text = text.replace(amp, "&").replace("&#39;", "'").replace(quot, '"')
+    return text.strip()
 
 
 def _oilish(title: str) -> bool:
@@ -125,7 +128,6 @@ class SentimentAnalyzer:
         }
 
     def fetch_realtime(self) -> Dict:
-        """Oil headlines plus the Forex Factory calendar for this week."""
         headlines = []
         sources = []
         feeds = [
