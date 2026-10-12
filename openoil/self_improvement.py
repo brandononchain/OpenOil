@@ -96,5 +96,44 @@ class SelfImprovement:
             "note": "Weights adjusted based on bias magnitude on winning trades"
         }
 
+    def settle(self, price: float, hold_seconds: int = 900) -> None:
+        """Score a call once price hits the stop, the target, or 15 minutes pass."""
+        if not price:
+            return
+        now = time.time()
+        changed = False
+        for rec in self.records:
+            if rec.get("closed"):
+                continue
+            entry = rec.get("entry")
+            side = rec.get("signal")
+            if not entry or side not in ("BUY", "SELL"):
+                continue
+            sl = rec.get("sl")
+            tp = rec.get("tp")
+            pnl = None
+            if side == "BUY":
+                if tp and price >= tp:
+                    pnl = tp - entry
+                elif sl and price <= sl:
+                    pnl = sl - entry
+                elif now - rec["ts"] >= hold_seconds:
+                    pnl = price - entry
+            else:
+                if tp and price <= tp:
+                    pnl = entry - tp
+                elif sl and price >= sl:
+                    pnl = entry - sl
+                elif now - rec["ts"] >= hold_seconds:
+                    pnl = entry - price
+            if pnl is None:
+                continue
+            rec["pnl"] = round(pnl, 4)
+            rec["outcome"] = "win" if pnl > 0 else "loss"
+            rec["closed"] = True
+            changed = True
+        if changed:
+            self.save()
+
     def get_open_records(self) -> List[Dict]:
         return [r for r in self.records if not r.get("closed")]
